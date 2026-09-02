@@ -1,0 +1,15 @@
+[package]
+name = "kata1-uf-egraph"
+version = "0.1.0"
+edition = "2021"
+
+# Detach from the parent repo's [workspace] (Cargo.toml at the repo root):
+# an empty [workspace] table here makes this crate its own workspace root
+# instead of erroring as an unlisted member of the main one. Deliberate --
+# this is ramp-up scratch work, not part of the verified engine, and it
+# must never end up inside `cargo verus verify`'s scope.
+[workspace]
+
+# Deliberately zero dependencies: the property test is a small hand-rolled
+# PRNG + fuzz loop instead of proptest/quickcheck, so this kata builds
+# offline. Single src/main.rs, no separate lib/bin split -- see README.
