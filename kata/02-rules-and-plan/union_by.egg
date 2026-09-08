@@ -1,0 +1,59 @@
+;; --union-by investigation, part 2 -- full writeup in NOTES.md. Forces
+;; rank(A) > rank(B) but size(B) > size(A) -- an 8-leaf balanced union tree
+;; for A (rank ~3, 8 members) and a long flat fold-in for B (rank ~1, 20
+;; members) -- so --union-by rank|uses and --union-by size|sum genuinely
+;; pick OPPOSITE survivors for the final A/B merge (confirmed via
+;; EGRAPH_TRACE_DELTA=1: round-1 touched-set size is 21 items when B is
+;; absorbed, 10 when A is absorbed). But print-stats/(check ...) still come
+;; out identical across all four policies -- see NOTES.md for why.
+;;
+;; Run: EGRAPH_TRACE_DELTA=1 ./target/release/semi-persistent \
+;;        kata/02-rules-and-plan/union_by.egg \
+;;        --union-by <rank|size|uses|sum> --use-semi-naive
+(sort N)
+(function A () N) (function B () N)
+(function d0 () N) (function d1 () N) (function d2 () N) (function d3 () N)
+(function d4 () N) (function d5 () N) (function d6 () N) (function d7 () N)
+(function e0 () N) (function e1 () N) (function e2 () N) (function e3 () N)
+(function e4 () N) (function e5 () N) (function e6 () N) (function e7 () N)
+(function e8 () N) (function e9 () N) (function e10 () N) (function e11 () N)
+(function e12 () N) (function e13 () N) (function e14 () N) (function e15 () N)
+(function e16 () N) (function e17 () N)
+
+;; Build A's class to rank 3 via a balanced binary merge tree (8 leaves incl A).
+(union (A) (d0))
+(union (d1) (d2))
+(union (A) (d1))          ;; rank1 vs rank1 tie -> rank2, A side survives
+(union (d3) (d4))
+(union (d5) (d6))
+(union (d3) (d5))         ;; rank1 vs rank1 tie -> rank2
+(union (A) (d3))          ;; rank2 vs rank2 tie -> rank3, A survives
+;; A's class now has 8 members (A,d0..d6 minus whichever id vacated), rank 3.
+
+;; Build B's class: rank stays low (~1) but pump size up a lot. Always union
+;; B first so ties only bite once, then B (higher rank after that) always
+;; wins without incrementing further.
+(union (B) (e0))
+(union (B) (e1)) (union (B) (e2)) (union (B) (e3)) (union (B) (e4))
+(union (B) (e5)) (union (B) (e6)) (union (B) (e7)) (union (B) (e8))
+(union (B) (e9)) (union (B) (e10)) (union (B) (e11)) (union (B) (e12))
+(union (B) (e13)) (union (B) (e14)) (union (B) (e15)) (union (B) (e16))
+(union (B) (e17))
+;; B's class now has 20 members, rank ~1.
+
+(function p (N) N)
+(function q (N) N)
+(function mA (N) N)
+(function mB (N) N)
+(function done (N) N)
+
+(p (A))
+(q (B))
+(mA (A))
+(mB (B))
+
+(rule ((mA h) (mB l)) ((union h l)))
+(rule ((p x) (q x)) ((done x)))
+
+(run 3)
+(print-stats)

@@ -1,0 +1,26 @@
+;; Kata 2, part 2: §2's running example, plus one ordinary rewrite so
+;; EGRAPH_DUMP_PLAN=1 has something to compile a plan for. §2's own
+;; abstract-guard machinery (`within`, lattice values on classes) doesn't
+;; exist yet -- that's Task 2/3 of the real practicum -- so this rewrite is
+;; the plain-pattern version of the same idea: "if the condition class is
+;; literally the True() node, Ite picks the then-arm." No abstract domain
+;; needed, just ordinary matching.
+
+(sort B) (sort I)
+(function True () B) (function Lt (I I) B)
+(function Lit (IBig) I) (function Add (I I) I)
+(function Ite (B I I) I)
+(function Clamp (I I I) I)
+
+(rewrite (Ite (True) x y) x)
+
+(let three (Lit 3)) (let ten (Lit 10))
+(let c (Lt three ten))
+(let t (Ite c three ten))
+
+(check (!= t three))
+
+(union c (True))
+(run 1)
+
+(check (= t three))

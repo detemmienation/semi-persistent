@@ -1,0 +1,19 @@
+;; Kata 2, part 1b: a rule set that diverges.
+;;
+;; `grow` always matches its own output (wrapped one layer deeper), so the
+;; action counter never hits zero -- there is no operational fixpoint. Each
+;; `(run 5)` should report `saturated: false`, and the node count should keep
+;; climbing between the two print-stats calls.
+
+(sort N)
+(function leaf () N)
+(function wrap (N) N)
+(function grow (N) N)
+
+(rewrite (grow x) (grow (wrap x)))
+
+(let seed (grow (leaf)))
+(run 5)
+(print-stats)
+(run 5)
+(print-stats)

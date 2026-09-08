@@ -1,0 +1,19 @@
+;; Kata 2, part 1a: a rule set that saturates.
+;;
+;; inc/dec cancellation: every rewrite strictly shrinks the term (removes one
+;; inc-dec or dec-inc pair), so there's a finite descent to a fixpoint no
+;; matter how deep the starting term is. print-stats should report
+;; `saturated: true` once the action counter hits zero.
+
+(sort N)
+(function z () N)
+(function inc (N) N)
+(function dec (N) N)
+
+(rewrite (inc (dec x)) x)
+(rewrite (dec (inc x)) x)
+
+(let a (inc (dec (inc (dec (inc (dec (z))))))))
+(run 10)
+(check (= a (z)))
+(print-stats)
