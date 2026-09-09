@@ -1,0 +1,15 @@
+[package]
+name = "kata-verus-practice"
+version = "0.1.0"
+edition = "2024"
+
+# Detach from the parent repo's [workspace] -- same reason as kata 1: this
+# is ramp-up scratch work, must never enter cargo verus verify's scope for
+# the real verified crates.
+[workspace]
+
+[dependencies]
+vstd = "=0.0.0-2026-08-02-0125"
+
+[package.metadata.verus]
+verify = true
