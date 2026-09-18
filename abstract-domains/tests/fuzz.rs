@@ -36,6 +36,12 @@ struct Interval {
     hi: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Congruence {
+    modulus: u64,
+    residue: u64,
+}
+
 impl ExecTnum {
     fn wf(&self) -> bool {
         self.val & self.mask == 0
@@ -188,6 +194,41 @@ impl Interval {
             Interval { lo: 0, hi: !0 }
         } else {
             Interval { lo, hi }
+        }
+    }
+}
+
+impl Congruence {
+    fn constant(x: u64) -> Self {
+        Congruence {
+            modulus: 0,
+            residue: x,
+        }
+    }
+
+    fn top() -> Self {
+        Congruence {
+            modulus: 1,
+            residue: 0,
+        }
+    }
+
+    fn contains(&self, x: u64) -> bool {
+        if self.modulus == 0 {
+            x == self.residue
+        } else {
+            x % self.modulus == self.residue
+        }
+    }
+
+    fn normalize(&self) -> Self {
+        if self.modulus == 0 {
+            *self
+        } else {
+            Congruence {
+                modulus: self.modulus,
+                residue: self.residue % self.modulus,
+            }
         }
     }
 }
@@ -430,6 +471,44 @@ fuzz_binop!(
         if of { 0u64 } else { r } // skip overflow cases
     }
 );
+
+// ----------------------------------------------------------------
+// Congruence tests
+// ----------------------------------------------------------------
+
+// Check a constant contains only its exact value
+#[test]
+fn test_congruence_constant() {
+    let c = Congruence::constant(5);
+
+    assert!(c.contains(5));
+    assert!(!c.contains(4));
+    assert!(!c.contains(6));
+}
+
+// Check top contains every tested value
+#[test]
+fn test_congruence_top() {
+    let c = Congruence::top();
+
+    for x in 0u64..100 {
+        assert!(c.contains(x));
+    }
+}
+
+// Check normalization reduces the residue modulo the modulus
+#[test]
+fn test_congruence_normalize() {
+    let c = Congruence {
+        modulus: 4,
+        residue: 5,
+    };
+
+    let n = c.normalize();
+
+    assert_eq!(n.modulus, 4);
+    assert_eq!(n.residue, 1);
+}
 
 // ================================================================
 // ExecUnum (Unum) — horizontally composable additive tristate numbers
