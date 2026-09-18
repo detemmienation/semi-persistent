@@ -233,6 +233,15 @@ impl Congruence {
     }
 }
 
+// Concrete oracle for congruence membership.
+fn congruence_oracle(modulus: u64, residue: u64, x: u64) -> bool {
+    if modulus == 0 {
+        x == residue
+    } else {
+        x % modulus == residue % modulus
+    }
+}
+
 // ================================================================
 // Random generation + sampling
 // ================================================================
@@ -508,6 +517,27 @@ fn test_congruence_normalize() {
 
     assert_eq!(n.modulus, 4);
     assert_eq!(n.residue, 1);
+}
+
+// Exhaustively compare Congruence membership with the concrete oracle.
+#[test]
+fn test_congruence_oracle() {
+    for modulus in 0u64..8 {
+        for residue in 0u64..8 {
+            let c = Congruence {
+                modulus,
+                residue,
+            }
+            .normalize();
+
+            for x in 0u64..16 {
+                assert_eq!(
+                    c.contains(x),
+                    congruence_oracle(modulus, residue, x)
+                );
+            }
+        }
+    }
 }
 
 // ================================================================
