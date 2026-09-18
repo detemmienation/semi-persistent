@@ -1284,6 +1284,65 @@ macro_rules! abstract_domain {
                     Interval { lo: self.lo / d, hi: self.hi / d }
                 }
             }
+            
+            // StridedInterval: {lo, lo+stride, lo+2*stride, ...} <= hi
+            #[derive(Clone, Copy)]
+            pub enum StridedInterval {
+                Bottom,
+                Value { stride: $uint, lo: $uint, hi: $uint },
+            }
+            impl StridedInterval {
+                /// stride == 0 is reserved for singletons: lo must equal
+                /// hi. stride >= 1 only requires ordered bounds; whether
+                /// `hi` sits on the stride grid is a normalization concern
+                /// (next commit), not a well-formedness one.
+                pub open spec fn wf(self) -> bool {
+                    match self {
+                        StridedInterval::Bottom => true,
+                        StridedInterval::Value { stride, lo, hi } =>
+                            lo <= hi && (stride == 0 ==> lo == hi),
+                    }
+                }
+                pub open spec fn has(self, x: $uint) -> bool {
+                    match self {
+                        StridedInterval::Bottom => false,
+                        StridedInterval::Value { stride, lo, hi } =>
+                            lo <= x && x <= hi
+                                && (stride == 0 || (x as int - lo as int) % (stride as int) == 0),
+                    }
+                }
+                /// self.refines(other) iff values(self) subseteq values(other).
+                pub open spec fn refines(self, other: Self) -> bool {
+                    forall|x: $uint| #![auto] self.has(x) ==> other.has(x)
+                }
+
+                #[inline] pub fn bottom() -> (r: StridedInterval)
+                    ensures r.wf(), forall|x: $uint| #![auto] !r.has(x)
+                {
+                    StridedInterval::Bottom
+                }
+
+                #[inline] pub fn top() -> (r: StridedInterval) ensures r.wf() {
+                    StridedInterval::Value { stride: 1, lo: 0, hi: !(0 as $uint) }
+                }
+                /// top contains everything.
+                pub proof fn top_has(x: $uint)
+                    ensures (StridedInterval::Value { stride: 1, lo: 0, hi: !(0 as $uint) }).has(x)
+                {
+                    assert(!(0 as $uint) >= x) by(bit_vector);
+                }
+
+                #[inline] pub fn singleton(x: $uint) -> (r: StridedInterval)
+                    ensures r.wf(), r.has(x)
+                {
+                    StridedInterval::Value { stride: 0, lo: x, hi: x }
+                }
+                /// singleton(x) contains exactly {x}, nothing else.
+                pub proof fn singleton_exact(x: $uint, y: $uint)
+                    requires (StridedInterval::Value { stride: 0, lo: x, hi: x }).has(y)
+                    ensures y == x
+                {}
+            }
 
             // ============================================================
             // ReducedProduct: Tnum x Anum x Interval x Unum reduced product
