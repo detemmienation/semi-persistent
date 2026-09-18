@@ -234,12 +234,23 @@ impl Congruence {
 }
 
 // Concrete oracle for congruence membership.
-fn congruence_oracle(modulus: u64, residue: u64, x: u64) -> bool {
+fn congruence_membership_oracle(modulus: u64, residue: u64, x: u64) -> bool {
     if modulus == 0 {
         x == residue
     } else {
         x % modulus == residue % modulus
     }
+}
+
+// Concrete oracle for whether two congruence classes share a value.
+fn congruence_classes_compatible(a: Congruence, b: Congruence) -> bool {
+    // Small concrete search space for the Week 4 oracle.
+    for x in 0u64..64 {
+        if a.contains(x) && b.contains(x) {
+            return true;
+        }
+    }
+    false
 }
 
 // ================================================================
@@ -521,7 +532,7 @@ fn test_congruence_normalize() {
 
 // Exhaustively compare Congruence membership with the concrete oracle.
 #[test]
-fn test_congruence_oracle() {
+fn test_congruence_membership_oracle() {
     for modulus in 0u64..8 {
         for residue in 0u64..8 {
             let c = Congruence {
@@ -533,11 +544,43 @@ fn test_congruence_oracle() {
             for x in 0u64..16 {
                 assert_eq!(
                     c.contains(x),
-                    congruence_oracle(modulus, residue, x)
+                    congruence_membership_oracle(modulus, residue, x)
                 );
             }
         }
     }
+}
+
+// Check a pair of compatible congruence classes.
+#[test]
+fn test_congruence_compatible_classes() {
+    let a = Congruence {
+        modulus: 2,
+        residue: 0,
+    };
+
+    let b = Congruence {
+        modulus: 4,
+        residue: 0,
+    };
+
+    assert!(congruence_classes_compatible(a, b));
+}
+
+// Check a pair of incompatible congruence classes.
+#[test]
+fn test_congruence_incompatible_classes() {
+    let a = Congruence {
+        modulus: 2,
+        residue: 0,
+    };
+
+    let b = Congruence {
+        modulus: 2,
+        residue: 1,
+    };
+
+    assert!(!congruence_classes_compatible(a, b));
 }
 
 // ================================================================
