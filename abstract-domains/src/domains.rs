@@ -1342,6 +1342,82 @@ macro_rules! abstract_domain {
                     requires (StridedInterval::Value { stride: 0, lo: x, hi: x }).has(y)
                     ensures y == x
                 {}
+
+                /// Canonical form: stride == 0 whenever the set has one
+                /// element (matches the Bottom/Value split -- lo == hi is
+                /// only ever spelled with stride == 0), and hi sits on the
+                /// stride grid otherwise, so (5,7,7) and (2,7,7) both
+                /// normalize to (0,7,7) instead of staying distinct
+                /// representations of the same set.
+                pub fn normalize(&self) -> (r: StridedInterval)
+                    requires self.wf()
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto] self.has(x) == r.has(x)
+                {
+                    match self {
+                        StridedInterval::Bottom => StridedInterval::Bottom,
+                        StridedInterval::Value { stride, lo, hi } => {
+                            let stride = *stride; let lo = *lo; let hi = *hi;
+                            if stride == 0 || lo == hi {
+                                let result = StridedInterval::Value { stride: 0, lo, hi: lo };
+                                if stride != 0 {
+                                    proof {
+                                        vstd::arithmetic::div_mod::lemma_mod_multiples_basic(0, stride as int);
+                                    }
+                                }
+                                result
+                            } else {
+                                let q = (hi - lo) / stride;
+                                proof {
+                                    // (hi-lo) == stride*q + remainder, remainder in [0, stride),
+                                    // so stride*q <= hi-lo -- in exactly the (stride * q) shape
+                                    // the overflow check on `stride * q` below needs.
+                                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((hi - lo) as int, stride as int);
+                                    vstd::arithmetic::div_mod::lemma_mod_pos_bound((hi - lo) as int, stride as int);
+                                    assert(stride as int * q as int <= hi as int - lo as int);
+                                }
+                                let step = stride * q;
+                                proof {
+                                    assert(lo as int + step as int <= hi as int);
+                                }
+                                let hi2 = lo + step;
+                                let result = if hi2 == lo {
+                                    let r = StridedInterval::Value { stride: 0, lo, hi: lo };
+                                    proof {
+                                        vstd::arithmetic::div_mod::lemma_mod_multiples_basic(0, stride as int);
+                                    }
+                                    r
+                                } else {
+                                    StridedInterval::Value { stride, lo, hi: hi2 }
+                                };
+                                proof {
+                                    assert forall|x: $uint| #![auto] self.has(x) implies result.has(x) by {
+                                        if lo <= x && x <= hi && (x as int - lo as int) % (stride as int) == 0 {
+                                            let k = (x as int - lo as int) / (stride as int);
+                                            // x - lo == stride * k (remainder 0, matches the
+                                            // `d * (x/d)` shape lemma_fundamental_div_mod gives).
+                                            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int - lo as int, stride as int);
+                                            vstd::arithmetic::div_mod::lemma_div_is_ordered(x as int - lo as int, hi as int - lo as int, stride as int);
+                                            // k <= q  ==>  stride*k <= stride*q (== step), same
+                                            // "stride first" shape throughout to sidestep needing
+                                            // a separate multiplication-commutativity lemma.
+                                            vstd::arithmetic::mul::lemma_mul_left_inequality(stride as int, k, q as int);
+                                            assert(stride as int * k <= stride as int * q as int);
+                                            assert(x as int - lo as int <= step as int);
+                                            assert(x as int <= hi2 as int);
+                                        }
+                                    };
+                                    assert forall|x: $uint| #![auto] result.has(x) implies self.has(x) by {
+                                        if lo <= x && x <= hi2 && (x as int - lo as int) % (stride as int) == 0 {
+                                            assert(x as int <= hi as int);
+                                        }
+                                    };
+                                }
+                                result
+                            }
+                        }
+                    }
+                }
             }
 
             // ============================================================
