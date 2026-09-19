@@ -1,12 +1,12 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-08-21.
+Last refreshed: 2026-09-18.
 
 ## Current result
 
 ```text
 cargo verus verify
-994 verified, 0 errors
+1026 verified, 0 errors
 ```
 
 The project source contains no executable `admit()` or `assume()` calls. CI
@@ -27,7 +27,7 @@ The `d128` macro invocation remains disabled because its bitvector obligations
 exceed the current solver capacity. Do not describe `u128` as an enabled or
 verified executable instance.
 
-The separate Rust mirror suite contains 32 tests:
+The separate Rust mirror suite contains 41 tests:
 
 ```text
 cargo test -p semi-persistent-abstract-domains --test fuzz
@@ -45,6 +45,7 @@ implementation corresponds to the verified definitions.
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
 | L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval`, `ReducedProduct` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
+| L4 | `StridedInterval` at four enabled widths | representation and normalization only (Week 4 of Task 1); not yet in `ReducedProduct` |
 
 All enabled L4 results are proved well formed where their contracts say so.
 The current **universal containment** contracts are:
@@ -69,3 +70,13 @@ subtraction, multiplication, division, shifts, joins, meets, and negation.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
+
+`StridedInterval` is new this week and has no join/meet/arithmetic yet, so it
+has no entries in the containment table above -- there is no cross-operand
+operation to state a containment contract about. What is proved: `wf`,
+`bottom`/`top`/`singleton` produce wf values with the concretization the
+project-wide semantics require (`top_has`, `singleton_exact`), and
+`normalize` preserves concretization exactly (`self.has(x) == r.has(x)`, not
+just "no values lost"). Join, meet, arithmetic transfers, and the general
+gcd/CRT meet land in Weeks 5-7 per the Task 1 plan; `ReducedProduct`
+integration is Week 7.
