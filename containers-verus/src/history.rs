@@ -128,7 +128,7 @@ impl Genealogy {
             // validity status — a consumed token stays consumed.
             t.generation >= old(self).next_spec(),
             final(self).next_spec() > t.generation,
-            forall|u: GroupToken| u.generation < old(self).next_spec()
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.generation < old(self).next_spec()
                 ==> final(self).valid_spec(u) == old(self).valid_spec(u),
     {
         let g = self.stamps.mint_at(depth);
@@ -152,8 +152,8 @@ impl Genealogy {
             final(self).id_spec() == old(self).id_spec(),
             final(self).next_spec() == old(self).next_spec(),
             final(self).levels_len() == if depth < old(self).levels_len() { depth as nat } else { old(self).levels_len() },
-            forall|u: GroupToken| u.depth_spec() >= depth as nat ==> !final(self).valid_spec(u),
-            forall|u: GroupToken| u.depth_spec() < depth as nat
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= depth as nat ==> !final(self).valid_spec(u),
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < depth as nat
                 ==> final(self).valid_spec(u) == old(self).valid_spec(u),
     {
         self.stamps.cut_from(depth);
@@ -243,8 +243,8 @@ impl History {
             final(self).wf(),
             final(self).depth_spec() == t.depth_spec() + 1,
             final(self).valid_spec(t),
-            forall|u: GroupToken| u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u),
-            forall|u: GroupToken| u.depth_spec() <= t.depth_spec()
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u),
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() <= t.depth_spec()
                 ==> final(self).valid_spec(u) == old(self).valid_spec(u),
     {
         // Total: a stale or reused token, or one at or above the live depth,
@@ -269,9 +269,9 @@ impl History {
         ensures
             final(self).wf(),
             old(self).depth_spec() >= 1 ==> final(self).depth_spec() == old(self).depth_spec() - 1,
-            forall|u: GroupToken| old(self).depth_spec() >= 1 && u.depth_spec() >= old(self).depth_spec() - 1
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] old(self).depth_spec() >= 1 && u.depth_spec() >= old(self).depth_spec() - 1
                 ==> !final(self).valid_spec(u),
-            forall|u: GroupToken| old(self).depth_spec() >= 1 && u.depth_spec() < old(self).depth_spec() - 1
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] old(self).depth_spec() >= 1 && u.depth_spec() < old(self).depth_spec() - 1
                 ==> final(self).valid_spec(u) == old(self).valid_spec(u),
     {
         if !(self.depth >= 1) {
@@ -295,8 +295,8 @@ impl History {
             final(self).wf(),
             final(self).depth_spec() == t.depth_spec(),
             !final(self).valid_spec(t),
-            forall|u: GroupToken| u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u),
-            forall|u: GroupToken| u.depth_spec() < t.depth_spec()
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u),
+            forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < t.depth_spec()
                 ==> final(self).valid_spec(u) == old(self).valid_spec(u),
     {
         if !self.is_valid(t) {

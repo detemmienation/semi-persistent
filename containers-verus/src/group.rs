@@ -220,8 +220,8 @@ impl<M: Member> ForkHistory<M> {
                 &&& final(self).wf()
                 &&& final(self).depth_spec() == t.depth_spec() + 1
                 &&& final(self).valid_spec(t)
-                &&& forall|u: GroupToken| u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() <= t.depth_spec()
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u)
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() <= t.depth_spec()
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(self).model() == old(self).archive()[t.depth_spec() as int]
                 &&& final(self).archive() == old(self).archive().subrange(0, t.depth_spec() as int + 1)
@@ -248,8 +248,8 @@ impl<M: Member> ForkHistory<M> {
                 &&& final(self).wf()
                 &&& final(self).depth_spec() == t.depth_spec()
                 &&& !final(self).valid_spec(t)
-                &&& forall|u: GroupToken| u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() < t.depth_spec()
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u)
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < t.depth_spec()
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(self).model() == old(self).archive()[t.depth_spec() as int]
                 &&& final(self).archive() == old(self).archive().subrange(0, t.depth_spec() as int)
@@ -273,9 +273,9 @@ impl<M: Member> ForkHistory<M> {
                 &&& old(self).depth_spec() >= 1
                 &&& final(self).wf()
                 &&& final(self).depth_spec() == old(self).depth_spec() - 1
-                &&& forall|u: GroupToken| u.depth_spec() >= old(self).depth_spec() - 1
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= old(self).depth_spec() - 1
                     ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() < old(self).depth_spec() - 1
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < old(self).depth_spec() - 1
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(self).model() == old(self).archive()[old(self).depth_spec() - 1]
                 &&& final(self).archive() == old(self).archive().subrange(0, old(self).depth_spec() - 1)
@@ -403,8 +403,8 @@ impl History {
                 &&& final(m).depth_spec() == final(self).depth_spec()
                 &&& final(self).depth_spec() == t.depth_spec() + 1
                 &&& final(self).valid_spec(t)
-                &&& forall|u: GroupToken| u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() <= t.depth_spec()
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() > t.depth_spec() ==> !final(self).valid_spec(u)
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() <= t.depth_spec()
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(m).model() == old(m).archive()[t.depth_spec() as int]
                 &&& final(m).archive() == old(m).archive().subrange(0, t.depth_spec() as int + 1)
@@ -443,8 +443,8 @@ impl History {
                 &&& final(m).depth_spec() == final(self).depth_spec()
                 &&& final(self).depth_spec() == t.depth_spec()
                 &&& !final(self).valid_spec(t)
-                &&& forall|u: GroupToken| u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() < t.depth_spec()
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= t.depth_spec() ==> !final(self).valid_spec(u)
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < t.depth_spec()
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(m).model() == old(m).archive()[t.depth_spec() as int]
                 &&& final(m).archive() == old(m).archive().subrange(0, t.depth_spec() as int)
@@ -478,9 +478,9 @@ impl History {
                 &&& old(self).depth_spec() >= 1
                 &&& final(m).depth_spec() == final(self).depth_spec()
                 &&& final(self).depth_spec() == old(self).depth_spec() - 1
-                &&& forall|u: GroupToken| u.depth_spec() >= old(self).depth_spec() - 1
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] u.depth_spec() >= old(self).depth_spec() - 1
                     ==> !final(self).valid_spec(u)
-                &&& forall|u: GroupToken| u.depth_spec() < old(self).depth_spec() - 1
+                &&& forall|u: GroupToken| #![trigger final(self).valid_spec(u)] #![trigger old(self).valid_spec(u)] u.depth_spec() < old(self).depth_spec() - 1
                     ==> final(self).valid_spec(u) == old(self).valid_spec(u)
                 &&& final(m).model() == old(m).archive()[old(self).depth_spec() - 1]
                 &&& final(m).archive() == old(m).archive().subrange(0, old(self).depth_spec() - 1)
@@ -977,7 +977,7 @@ where
             self.entries.lemma_snapshots_len();
             assert(self.archive().len() == pre.archive().len() + 1);
             assert forall|k: int| 0 <= k < pre.archive().len()
-                implies self.archive()[k] == pre.archive().push(pre.model())[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().push(pre.model())[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive()[pre.archive().len() as int] == pre.model());
@@ -997,7 +997,7 @@ where
             self.entries.lemma_snapshots_len();
             assert(self.archive().len() == depth as int);
             assert forall|k: int| 0 <= k < depth as int
-                implies self.archive()[k] == pre.archive().subrange(0, depth as int)[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().subrange(0, depth as int)[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive() =~= pre.archive().subrange(0, depth as int));
@@ -1117,7 +1117,7 @@ where
             self.heads.lemma_snapshots_len();
             assert(self.archive().len() == pre.archive().len() + 1);
             assert forall|k: int| 0 <= k < pre.archive().len()
-                implies self.archive()[k] == pre.archive().push(pre.model())[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().push(pre.model())[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive()[pre.archive().len() as int] == pre.model());
@@ -1137,7 +1137,7 @@ where
             self.heads.lemma_snapshots_len();
             assert(self.archive().len() == depth as int);
             assert forall|k: int| 0 <= k < depth as int
-                implies self.archive()[k] == pre.archive().subrange(0, depth as int)[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().subrange(0, depth as int)[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive() =~= pre.archive().subrange(0, depth as int));
@@ -1267,7 +1267,7 @@ where
             self.parent.lemma_snapshots_len();
             assert(self.archive().len() == pre.archive().len() + 1);
             assert forall|k: int| 0 <= k < pre.archive().len()
-                implies self.archive()[k] == pre.archive().push(pre.model())[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().push(pre.model())[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive()[pre.archive().len() as int] == pre.model());
@@ -1302,7 +1302,7 @@ where
             self.parent.lemma_snapshots_len();
             assert(self.archive().len() == depth as int);
             assert forall|k: int| 0 <= k < depth as int
-                implies self.archive()[k] == pre.archive().subrange(0, depth as int)[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().subrange(0, depth as int)[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive() =~= pre.archive().subrange(0, depth as int));
@@ -1516,7 +1516,7 @@ where
             self.nodes.lemma_snapshots_len();
             assert(self.archive().len() == pre.archive().len() + 1);
             assert forall|k: int| 0 <= k < pre.archive().len()
-                implies self.archive()[k] == pre.archive().push(Member::model(&pre))[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().push(Member::model(&pre))[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive()[pre.archive().len() as int] == Member::model(&pre));
@@ -1536,7 +1536,7 @@ where
             self.nodes.lemma_snapshots_len();
             assert(self.archive().len() == depth as int);
             assert forall|k: int| 0 <= k < depth as int
-                implies self.archive()[k] == pre.archive().subrange(0, depth as int)[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().subrange(0, depth as int)[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive() =~= pre.archive().subrange(0, depth as int));
@@ -1671,7 +1671,7 @@ where
             reveal(crate::eclasses::eg_archive_agrees);
             assert(self.archive().len() == pre.archive().len() + 1);
             assert forall|k: int| 0 <= k < pre.archive().len()
-                implies self.archive()[k] == pre.archive().push(pre.model())[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().push(pre.model())[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive()[pre.archive().len() as int] == pre.model());
@@ -1689,7 +1689,7 @@ where
             reveal(crate::eclasses::eg_archive_agrees);
             assert(self.archive().len() == depth as int);
             assert forall|k: int| 0 <= k < depth as int
-                implies self.archive()[k] == pre.archive().subrange(0, depth as int)[k] by {
+                implies (#[trigger] self.archive()[k]) == pre.archive().subrange(0, depth as int)[k] by {
                 assert(self.archive()[k] == pre.archive()[k]);
             }
             assert(self.archive() =~= pre.archive().subrange(0, depth as int));

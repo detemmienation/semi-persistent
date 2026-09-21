@@ -565,7 +565,7 @@ impl<T: Copy, I: IndexLike, VC: ValueCompressor<T>> LayeredFrame<T, I, VC> {
                 self.wf(),
                 n == self.decode().len(),
                 out@.len() == t,
-                forall|k: int| 0 <= k < t ==> out@[k] == self.decode()[k],
+                forall|k: int| 0 <= k < t ==> (#[trigger] out@[k]) == self.decode()[k],
             decreases n - t,
         {
             let e = self.decode_at(t);

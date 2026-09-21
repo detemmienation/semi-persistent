@@ -52,6 +52,14 @@
 
 ### Changed
 
+- `reconstruct_parent_split` (B+ tree) is three proofs instead of one: the
+  link splice and the footprint reasoning moved into
+  `reconstruct_parent_split_links` and `reconstruct_parent_split_ids`, and the
+  `rlimit(70)` bump is gone; every query now verifies at the default limit
+  (the single body timed out on the Linux CI runner). Every quantifier whose
+  trigger Verus reported as auto-chosen now carries that trigger explicitly
+  (containers-verus and au-verus); the verifier prints no trigger notes.
+
 - Version tokens now carry their minting manager, a generation and a depth
   (`GroupToken`; `VecToken` is an alias); every container is a group of one
   with its own token manager, and a token from another container is refused.

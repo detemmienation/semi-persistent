@@ -731,7 +731,7 @@ impl<T: Copy, I: IndexLike> ColdStack<T, I> {
                                 assert(start + cl == tlen);
                             }
                             assert forall|j: int| 0 <= j < target@.len() implies
-                                target@[j] == write_block(pre_run, start as nat, vals)[j] by {
+                                (#[trigger] target@[j]) == write_block(pre_run, start as nat, vals)[j] by {
                                 if start as int <= j && j < start as int + cl as int {
                                     // Written: the loop's mirror forall, and
                                     // vals is the same pool subrange.
@@ -917,7 +917,7 @@ impl<T: Copy, I: IndexLike> ColdStack<T, I> {
                                 assert(start + cl == tlen);
                             }
                             assert forall|q: int| 0 <= q < target@.len() implies
-                                target@[q] == write_block(pre_run, start as nat, vals)[q] by {
+                                (#[trigger] target@[q]) == write_block(pre_run, start as nat, vals)[q] by {
                                 if start as int <= q && q < start as int + cl as int {
                                     assert(target@[start as int + (q - start as int)]
                                         == vals[q - start as int]);

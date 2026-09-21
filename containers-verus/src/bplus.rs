@@ -3948,13 +3948,12 @@ pub(crate) proof fn reconstruct_child_split_links<K, L, S, const TRACK: bool, P>
 /// `crid` (== ncr's root) is the recursion's right-half id; it is NOT `rid` (rt's
 /// root, the fresh push slot) — the two are deliberately distinct params.
 ///
-/// `rlimit(50)`: this composes eight building-block lemmas (tree_wf, two
-/// half_binds, the link splice + half_links, two half_ids, footprint, disjoint)
-/// in one body; the bump over the default covers the combined query (raised
-/// 30→50 when the Vec wf gained the `!TRACK ⟹ no frames` conjunct, which
-/// enlarges the ambient context this instantiates against; 50→70 when wf gained
-/// the per-frame saved_len == snapshot-length conjunct).
-#[verifier::rlimit(70)]
+/// Composes the building blocks in three queries so each stays at the default
+/// resource limit on every CI machine: this body does tree_wf and the two
+/// half_binds, [`reconstruct_parent_split_links`] the link splice + half_links,
+/// [`reconstruct_parent_split_ids`] the two half_ids, footprint and disjoint.
+/// (The single-body version needed `rlimit(70)` and still timed out on the
+/// Linux runner once the Vec wf grew its per-frame conjuncts.)
 pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
     arena1: Ghost<Seq<L::Node>>,
     arena_rec: Ghost<Seq<L::Node>>,
@@ -4229,9 +4228,129 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
     assert(binds::<L>(a2, rt@));
 
     // ---- (3) leaf_links_to(a2, lt, rt's first leaf) and leaf_links_to(a2, rt, succ). ----
-    // First build forest_links_to(a2, ckids, succ) via the child-split splice
-    // (identical to reconstruct_child_split_links' middle step), then split it at
-    // m == imid+1 into the two halves.
+    // The ar/a2 agreements on ncl/ncr and the a1/a2 agreement outside child cp
+    // were discharged above; the links sub-lemma splices and splits the chains.
+    reconstruct_parent_split_links::<K, L, S, TRACK, P>(
+        arena1, arena_rec, arena2, cur, gseps, gkids, cp, ncl, ncr, child_succ, lt, rt,
+        Ghost(sep.as_nat()), gid, Ghost(rid.as_nat()), h, succ);
+    assert(leaf_links_to::<L>(a2, lt@, crate::bplus_tree::tree_leaf_ids(rt@)[0]));
+    assert(leaf_links_to::<L>(a2, rt@, succ@));
+
+    // ---- (4) footprint / disjoint / first-leaf. ----
+    assert(crate::bplus_tree::tree_disjoint(ncl@));  // subtree_wf(ar, ncl)
+    assert(crate::bplus_tree::tree_disjoint(ncr@));  // subtree_wf(ar, ncr)
+    reconstruct_parent_split_ids::<K, L, S, TRACK, P>(
+        arena1, arena_rec, arena2, cur, gseps, gkids, cp, ncl, ncr, lt, rt,
+        Ghost(sep.as_nat()), gid, Ghost(rid.as_nat()), h, succ);
+    assert(crate::bplus_tree::tree_disjoint(lt@));
+    assert(crate::bplus_tree::tree_disjoint(rt@));
+    assert(crate::bplus_tree::tree_ids(lt@).disjoint(crate::bplus_tree::tree_ids(rt@)));
+    assert(crate::bplus_tree::tree_leaf_ids(lt@)[0] == crate::bplus_tree::tree_leaf_ids(cur_t)[0]);
+
+    // ---- (5) subtree_wf assembly + the global frame ensures. ----
+    assert(BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, lt@, h@, crate::bplus_tree::tree_leaf_ids(rt@)[0], false));
+    assert(BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, rt@, h@, succ@, false));
+    // global frame: slots < a1.len() outside tree_ids(cur) are unchanged in a2.
+    assert forall|i: int| 0 <= i < a1.len()
+        && !crate::bplus_tree::tree_ids(cur_t).contains(i as nat)
+        implies a2[i] == a1[i] by {
+        // i != gid (gid ∈ tree_ids(cur)); i outside child cp ⟹ ar[i]==a1[i]; i<ar.len.
+        assert(i != gid@);
+        if crate::bplus_tree::tree_ids(gkids@[cp@]).contains(i as nat) {
+            crate::bplus_tree::lemma_child_ids_in_forest(kids, cp@, i as nat);
+            assert(crate::bplus_tree::tree_ids(cur_t).contains(i as nat));  // contradiction
+        }
+        assert(ar[i] == a1[i]);
+        assert(i < ar.len());
+        assert(a2[i] == ar[i]);
+    }
+}
+
+/// Leaf-link sub-step of [`reconstruct_parent_split`]: the chains of the two
+/// halves in `a2`. Builds `forest_links_to(a2, ckids, succ)` by decomposing
+/// `cur`'s chain in `a1` and splicing in `ncl`/`ncr` (framed from `arena_rec`),
+/// then splits the chain at `imid + 1`. Split out of the parent so each solver
+/// query stays small: the parent composes only the binds and footprint facts.
+pub(crate) proof fn reconstruct_parent_split_links<K, L, S, const TRACK: bool, P>(
+    arena1: Ghost<Seq<L::Node>>,
+    arena_rec: Ghost<Seq<L::Node>>,
+    arena2: Ghost<Seq<L::Node>>,
+    cur: Ghost<Tree>,
+    gseps: Ghost<Seq<nat>>,
+    gkids: Ghost<Seq<Tree>>,
+    cp: Ghost<int>,
+    ncl: Ghost<Tree>,
+    ncr: Ghost<Tree>,
+    child_succ: Ghost<nat>,
+    lt: Ghost<Tree>,
+    rt: Ghost<Tree>,
+    sep: Ghost<nat>,
+    gid: Ghost<nat>,
+    rid: Ghost<nat>,
+    h: Ghost<nat>,
+    succ: Ghost<nat>,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+        P: TaggedFamily<L::Node, L::ArenaIdx, TRACK>,
+    requires
+        cur@ == (Tree::Inner { id: gid@, seps: gseps@, kids: gkids@ }),
+        h@ == crate::bplus_tree::tree_height(cur@),
+        h@ >= 1,
+        0 <= cp@ < gkids@.len(),
+        gseps@.len() == L::key_cap_spec(),
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(arena1@, cur@, h@, succ@, true),
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(arena_rec@, ncl@, (h@ - 1) as nat,
+            crate::bplus_tree::tree_leaf_ids(ncr@)[0], false),
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(arena_rec@, ncr@, (h@ - 1) as nat, child_succ@, false),
+        child_succ@ == (if cp@ + 1 < gkids@.len() {
+            crate::bplus_tree::tree_leaf_ids(gkids@[cp@ + 1])[0]
+        } else { succ@ }),
+        crate::bplus_tree::tree_leaf_ids(ncl@).len() >= 1,
+        crate::bplus_tree::tree_leaf_ids(ncl@)[0] == crate::bplus_tree::tree_leaf_ids(gkids@[cp@])[0],
+        ({
+            let cseps = gseps@.insert(cp@, sep@);
+            let ckids = gkids@.update(cp@, ncl@).insert(cp@ + 1, ncr@);
+            let imid = L::isplit_mid_spec() as int;
+            &&& lt@ == (Tree::Inner { id: gid@, seps: cseps.subrange(0, imid), kids: ckids.subrange(0, imid + 1) })
+            &&& rt@ == (Tree::Inner { id: rid@, seps: cseps.subrange(imid + 1, cseps.len() as int),
+                    kids: ckids.subrange(imid + 1, ckids.len() as int) })
+        }),
+        // arena agreements, discharged by the caller: a2 == arena_rec on ncl/ncr's
+        // footprints, and a2 == a1 on old slots outside child cp and the parent.
+        (forall|id: nat| #![trigger arena_rec@[id as int]] #![trigger arena2@[id as int]]
+            crate::bplus_tree::tree_ids(ncl@).contains(id)
+            ==> arena_rec@[id as int] == arena2@[id as int]),
+        (forall|id: nat| #![trigger arena_rec@[id as int]] #![trigger arena2@[id as int]]
+            crate::bplus_tree::tree_ids(ncr@).contains(id)
+            ==> arena_rec@[id as int] == arena2@[id as int]),
+        (forall|i: int| 0 <= i < arena1@.len()
+            && !crate::bplus_tree::tree_ids(gkids@[cp@]).contains(i as nat)
+            && i != gid@
+            ==> arena2@[i] == arena1@[i]),
+    ensures
+        leaf_links_to::<L>(arena2@, lt@, crate::bplus_tree::tree_leaf_ids(rt@)[0]),
+        leaf_links_to::<L>(arena2@, rt@, succ@),
+        // each old child and each spliced child is non-empty (reused by the caller).
+        (forall|i: int| 0 <= i < gkids@.len() ==>
+            #[trigger] crate::bplus_tree::tree_leaf_ids(gkids@[i]).len() >= 1),
+        (forall|i: int| 0 <= i < gkids@.update(cp@, ncl@).insert(cp@ + 1, ncr@).len() ==>
+            #[trigger] crate::bplus_tree::tree_leaf_ids(gkids@.update(cp@, ncl@).insert(cp@ + 1, ncr@)[i]).len() >= 1),
+{
+    let a1 = arena1@; let ar = arena_rec@; let a2 = arena2@;
+    let kids = gkids@;
+    let cseps = gseps@.insert(cp@, sep@);
+    let ckids = kids.update(cp@, ncl@).insert(cp@ + 1, ncr@);
+    let imid = L::isplit_mid_spec() as int;
+    let cur_t = cur@;
+    L::lemma_isplit_mid();  // imid == key_cap/2, 1 <= imid < key_cap
+    assert(crate::bplus_tree::tree_wf(cur_t, h@, L::leaf_cap_spec(), L::key_cap_spec(), true));
+    assert(kids.len() == gseps@.len() + 1);
+    assert(cseps.len() == L::key_cap_spec() + 1);
+    assert(ckids.len() == cseps.len() + 1);
+
     crate::bplus_tree::lemma_tree_leaf_ids_nonempty(ncr@, (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), false);
     crate::bplus_tree::lemma_tree_leaf_ids_nonempty(ncl@, (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), false);
     // each old child non-empty.
@@ -4240,9 +4359,7 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
         crate::bplus_tree::lemma_forest_wf_at(kids, (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), i);
         crate::bplus_tree::lemma_tree_leaf_ids_nonempty(kids[i], (h@ - 1) as nat, L::leaf_cap_spec(), L::key_cap_spec(), false);
     }
-    // ncl/ncr's chains in a2 (framed from ar; subtree_wf(ar, ncl, .., ncr[0]) gives
-    // the chain, and a2 agrees with ar on their footprints — discharge agreement
-    // BEFORE the frame call). These reuse the agreements proven above for binds.
+    // ncl/ncr's chains in a2 (framed from ar; the agreements are preconditions).
     lemma_leaf_links_frame::<L>(ar, a2, ncl@, crate::bplus_tree::tree_leaf_ids(ncr@)[0]);
     lemma_leaf_links_frame::<L>(ar, a2, ncr@, child_succ@);
     assert(leaf_links_to::<L>(a2, ncl@, crate::bplus_tree::tree_leaf_ids(ncr@)[0]));
@@ -4250,6 +4367,7 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
     // decompose cur's chain in a1, splice in ncl/ncr to get forest_links_to(a2, ckids).
     crate::bplus_tree::lemma_forest_ids_cons(kids);
     lemma_forest_links_decompose::<L>(a1, gid@, gseps@, kids, succ@);
+    assert(crate::bplus_tree::tree_disjoint(cur_t));  // subtree_wf(a1, cur)
     assert forall|id: nat| #![trigger crate::bplus_tree::forest_ids(kids).contains(id)] #![trigger a1[id as int]] #![trigger a2[id as int]] crate::bplus_tree::forest_ids(kids).contains(id)
         && !crate::bplus_tree::tree_ids(kids[cp@]).contains(id)
         implies a1[id as int] == a2[id as int] by {
@@ -4272,7 +4390,7 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
         else { assert(ckids[i] == kids[i - 1]); }
     }
     // split the chain at m == imid+1 into the two halves' chains.
-    lemma_parent_split_half_links::<L>(a2, ckids, gid@, rid.as_nat(),
+    lemma_parent_split_half_links::<L>(a2, ckids, gid@, rid@,
         cseps.subrange(0, imid), cseps.subrange(imid + 1, cseps.len() as int), succ@, imid + 1);
     // the half-links lemma states the chains for Inner nodes with ckids subranges;
     // those ARE lt/rt (same id, seps, kids).
@@ -4283,8 +4401,102 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
     }
     assert(leaf_links_to::<L>(a2, lt@, crate::bplus_tree::tree_leaf_ids(rt@)[0]));
     assert(leaf_links_to::<L>(a2, rt@, succ@));
+}
 
-    // ---- (4) footprint / disjoint / first-leaf. ----
+/// Footprint sub-step of [`reconstruct_parent_split`]: `tree_disjoint` of each
+/// half, disjointness of the two halves, footprint subset/freshness against
+/// `cur`, and `lt`'s leftmost leaf. Pure id reasoning over `ckids`, plus the
+/// in-range facts from `binds` (every spliced child id is below `arena_rec`'s
+/// length, so the fresh slot `rid` is outside all of them). Split out of the
+/// parent so each solver query stays small.
+pub(crate) proof fn reconstruct_parent_split_ids<K, L, S, const TRACK: bool, P>(
+    arena1: Ghost<Seq<L::Node>>,
+    arena_rec: Ghost<Seq<L::Node>>,
+    arena2: Ghost<Seq<L::Node>>,
+    cur: Ghost<Tree>,
+    gseps: Ghost<Seq<nat>>,
+    gkids: Ghost<Seq<Tree>>,
+    cp: Ghost<int>,
+    ncl: Ghost<Tree>,
+    ncr: Ghost<Tree>,
+    lt: Ghost<Tree>,
+    rt: Ghost<Tree>,
+    sep: Ghost<nat>,
+    gid: Ghost<nat>,
+    rid: Ghost<nat>,
+    h: Ghost<nat>,
+    succ: Ghost<nat>,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+        P: TaggedFamily<L::Node, L::ArenaIdx, TRACK>,
+    requires
+        cur@ == (Tree::Inner { id: gid@, seps: gseps@, kids: gkids@ }),
+        h@ == crate::bplus_tree::tree_height(cur@),
+        h@ >= 1,
+        0 <= cp@ < gkids@.len(),
+        gseps@.len() == L::key_cap_spec(),
+        BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(arena1@, cur@, h@, succ@, true),
+        binds::<L>(arena_rec@, ncl@),
+        binds::<L>(arena_rec@, ncr@),
+        crate::bplus_tree::tree_disjoint(ncl@),
+        crate::bplus_tree::tree_disjoint(ncr@),
+        crate::bplus_tree::tree_leaf_ids(ncl@).len() >= 1,
+        crate::bplus_tree::tree_leaf_ids(ncl@)[0] == crate::bplus_tree::tree_leaf_ids(gkids@[cp@])[0],
+        (forall|id: nat| #[trigger] crate::bplus_tree::tree_ids(ncl@).contains(id)
+            ==> crate::bplus_tree::tree_ids(gkids@[cp@]).contains(id) || id >= arena1@.len()),
+        (forall|id: nat| #[trigger] crate::bplus_tree::tree_ids(ncr@).contains(id)
+            ==> crate::bplus_tree::tree_ids(gkids@[cp@]).contains(id) || id >= arena1@.len()),
+        (forall|id: nat| #![trigger crate::bplus_tree::tree_ids(ncl@).contains(id)] #![trigger crate::bplus_tree::tree_ids(ncr@).contains(id)] crate::bplus_tree::tree_ids(gkids@[cp@]).contains(id)
+            ==> crate::bplus_tree::tree_ids(ncl@).contains(id) || crate::bplus_tree::tree_ids(ncr@).contains(id)),
+        crate::bplus_tree::tree_ids(ncl@).disjoint(crate::bplus_tree::tree_ids(ncr@)),
+        arena1@.len() <= arena_rec@.len(),
+        rid@ == arena_rec@.len(),
+        arena2@.len() == arena_rec@.len() + 1,
+        forest_binds_l::<L>(arena2@, gkids@.update(cp@, ncl@).insert(cp@ + 1, ncr@)),
+        (forall|i: int| 0 <= i < gkids@.len() ==>
+            #[trigger] crate::bplus_tree::tree_leaf_ids(gkids@[i]).len() >= 1),
+        ({
+            let cseps = gseps@.insert(cp@, sep@);
+            let ckids = gkids@.update(cp@, ncl@).insert(cp@ + 1, ncr@);
+            let imid = L::isplit_mid_spec() as int;
+            &&& lt@ == (Tree::Inner { id: gid@, seps: cseps.subrange(0, imid), kids: ckids.subrange(0, imid + 1) })
+            &&& rt@ == (Tree::Inner { id: rid@, seps: cseps.subrange(imid + 1, cseps.len() as int),
+                    kids: ckids.subrange(imid + 1, ckids.len() as int) })
+        }),
+    ensures
+        crate::bplus_tree::tree_disjoint(lt@),
+        crate::bplus_tree::tree_disjoint(rt@),
+        crate::bplus_tree::tree_ids(lt@).disjoint(crate::bplus_tree::tree_ids(rt@)),
+        (forall|id: nat| crate::bplus_tree::tree_ids(lt@).contains(id)
+            ==> crate::bplus_tree::tree_ids(cur@).contains(id) || id >= arena1@.len()),
+        (forall|id: nat| crate::bplus_tree::tree_ids(rt@).contains(id)
+            ==> crate::bplus_tree::tree_ids(cur@).contains(id) || id >= arena1@.len()),
+        (forall|id: nat| crate::bplus_tree::tree_ids(cur@).contains(id)
+            ==> crate::bplus_tree::tree_ids(lt@).contains(id) || crate::bplus_tree::tree_ids(rt@).contains(id)),
+        crate::bplus_tree::tree_leaf_ids(lt@).len() >= 1,
+        crate::bplus_tree::tree_leaf_ids(lt@)[0] == crate::bplus_tree::tree_leaf_ids(cur@)[0],
+{
+    let a1 = arena1@; let ar = arena_rec@; let a2 = arena2@;
+    let kids = gkids@;
+    let cseps = gseps@.insert(cp@, sep@);
+    let ckids = kids.update(cp@, ncl@).insert(cp@ + 1, ncr@);
+    let imid = L::isplit_mid_spec() as int;
+    let cur_t = cur@;
+    L::lemma_isplit_mid();  // imid == key_cap/2, 1 <= imid < key_cap
+    assert(crate::bplus_tree::tree_wf(cur_t, h@, L::leaf_cap_spec(), L::key_cap_spec(), true));
+    assert(kids.len() == gseps@.len() + 1);
+    assert(cseps.len() == L::key_cap_spec() + 1);
+    assert(ckids.len() == cseps.len() + 1);
+
+    // gid ∈ tree_ids(cur), gid < a1.len().
+    crate::bplus_tree::lemma_node_id_not_in_child::<>(cur_t, cp@);
+    lemma_tree_id_in_range::<L>(a1, cur_t, gid@);
+    assert(crate::bplus_tree::tree_ids(cur_t).contains(gid@));
+    assert(gid@ < a1.len());
+
     let lkids = ckids.subrange(0, imid + 1);
     let rkids = ckids.subrange(imid + 1, ckids.len() as int);
     assert(lkids + rkids =~= ckids) by {
@@ -4298,10 +4510,8 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
     assert forall|id: nat| #[trigger] crate::bplus_tree::tree_ids(cur_t).contains(id) implies id < a1.len() by {
         lemma_tree_id_in_range::<L>(a1, cur_t, id);
     }
-    assert(crate::bplus_tree::tree_disjoint(ncl@));  // subtree_wf(ar, ncl)
-    assert(crate::bplus_tree::tree_disjoint(ncr@));  // subtree_wf(ar, ncr)
     crate::bplus_tree::lemma_child_split_absorb_ids(
-        gid@, gseps@, kids, cp@, ncl@, ncr@, sep.as_nat(), a1.len());
+        gid@, gseps@, kids, cp@, ncl@, ncr@, sep@, a1.len());
     assert(crate::bplus_tree::tree_disjoint(combined));  // == lemma's `nt`
     assert(!crate::bplus_tree::forest_ids(ckids).contains(gid@));  // tree_disjoint(combined)
     assert(crate::bplus_tree::forest_disjoint(ckids));
@@ -4341,11 +4551,9 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
         // ckids[m] binds in a2 (forest_binds_l(a2, ckids)); a tree id < a2.len() == ar.len()+1.
         lemma_forest_binds_at::<L>(a2, ckids, m);
         lemma_tree_id_in_range::<L>(a2, ckids[m], id);  // id < a2.len() == ar.len()+1
-        // and id != rid (== ar.len()): rid is gid-or-fresh root of rt, the slot pr,
-        // which is NOT a child root inside ckids (ckids roots are gkids/ncl/ncr).
-        if id == rid.as_nat() {
-            // rid == ar.len() is the freshly pushed pr slot; no ckids child has it
-            // as an id (ncl/ncr ids are < ar.len(): they bind in arena_rec).
+        // and id != rid (== ar.len()): rid is the freshly pushed slot, which is NOT
+        // a child root inside ckids (ckids roots are gkids/ncl/ncr).
+        if id == rid@ {
             assert(id < ar.len()) by {
                 if crate::bplus_tree::tree_ids(ncl@).contains(id) { lemma_tree_id_in_range::<L>(ar, ncl@, id); }
                 else if crate::bplus_tree::tree_ids(ncr@).contains(id) { lemma_tree_id_in_range::<L>(ar, ncr@, id); }
@@ -4359,48 +4567,31 @@ pub(crate) proof fn reconstruct_parent_split<K, L, S, const TRACK: bool, P>(
             }
         }
     }
-    assert(!crate::bplus_tree::forest_ids(ckids).contains(gid@)) by {
-        // gid ∉ forest_ids(ckids) was shown via tree_disjoint(combined) above.
-    }
     // disjoint footprints of lt and rt (distinct roots gid (< ar.len()), rid (== ar.len())).
-    crate::bplus_tree::lemma_parent_split_disjoint(gid@, rid.as_nat(), ckids, lt@, rt@, lkids, rkids, ar.len());
+    crate::bplus_tree::lemma_parent_split_disjoint(gid@, rid@, ckids, lt@, rt@, lkids, rkids, ar.len());
     // tree_disjoint of each half (subrange of forest_disjoint(ckids) + pairwise; the
     // half root gid/rid ∉ its children's footprints). lemma_parent_split_half_ids
     // gives it for the empty-seps Inner, which has the SAME tree_ids as lt/rt (seps-
     // independent), so tree_disjoint transfers.
     crate::bplus_tree::lemma_parent_split_half_ids(ckids, gid@, 0, imid, ar.len());
-    crate::bplus_tree::lemma_parent_split_half_ids(ckids, rid.as_nat(), imid + 1,
+    crate::bplus_tree::lemma_parent_split_half_ids(ckids, rid@, imid + 1,
         (L::key_cap_spec() - imid) as int, ar.len());
     assert(crate::bplus_tree::tree_disjoint(lt@)) by {
         assert(crate::bplus_tree::tree_disjoint(Tree::Inner { id: gid@, seps: Seq::<nat>::empty(), kids: lkids }));
         // tree_disjoint reads only id + kids, and lt has id==gid, kids==lkids.
     }
     assert(crate::bplus_tree::tree_disjoint(rt@)) by {
-        assert(crate::bplus_tree::tree_disjoint(Tree::Inner { id: rid.as_nat(), seps: Seq::<nat>::empty(), kids: rkids }));
+        assert(crate::bplus_tree::tree_disjoint(Tree::Inner { id: rid@, seps: Seq::<nat>::empty(), kids: rkids }));
     }
     // footprint subset/freshness/first-leaf via lemma_parent_split_footprint.
+    // lkids[0] == ckids[0] is ncl (cp == 0, whose first leaf is kids[0]'s) or
+    // kids[0]; either way its first leaf is cur's.
+    crate::bplus_tree::lemma_forest_leaf_ids_cons(kids);
+    assert(crate::bplus_tree::tree_leaf_ids(cur_t)[0] == crate::bplus_tree::tree_leaf_ids(kids[0])[0]);
+    assert(lkids[0] == ckids[0]);
+    if cp@ == 0 { assert(ckids[0] == ncl@); } else { assert(ckids[0] == kids[0]); }
     crate::bplus_tree::lemma_parent_split_footprint(
-        cur_t, gid@, rid.as_nat(), kids, lt@, rt@, lkids, rkids, ckids, a1.len());
-    assert(crate::bplus_tree::tree_ids(lt@).disjoint(crate::bplus_tree::tree_ids(rt@)));
-    assert(crate::bplus_tree::tree_leaf_ids(lt@)[0] == crate::bplus_tree::tree_leaf_ids(cur_t)[0]);
-
-    // ---- (5) subtree_wf assembly + the global frame ensures. ----
-    assert(BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, lt@, h@, crate::bplus_tree::tree_leaf_ids(rt@)[0], false));
-    assert(BPlusTreeSet::<K, L, S, TRACK>::subtree_wf(a2, rt@, h@, succ@, false));
-    // global frame: slots < a1.len() outside tree_ids(cur) are unchanged in a2.
-    assert forall|i: int| 0 <= i < a1.len()
-        && !crate::bplus_tree::tree_ids(cur_t).contains(i as nat)
-        implies a2[i] == a1[i] by {
-        // i != gid (gid ∈ tree_ids(cur)); i outside child cp ⟹ ar[i]==a1[i]; i<ar.len.
-        assert(i != gid@);
-        if crate::bplus_tree::tree_ids(gkids@[cp@]).contains(i as nat) {
-            crate::bplus_tree::lemma_child_ids_in_forest(kids, cp@, i as nat);
-            assert(crate::bplus_tree::tree_ids(cur_t).contains(i as nat));  // contradiction
-        }
-        assert(ar[i] == a1[i]);
-        assert(i < ar.len());
-        assert(a2[i] == ar[i]);
-    }
+        cur_t, gid@, rid@, kids, lt@, rt@, lkids, rkids, ckids, a1.len());
 }
 
 /// Leaf-link sub-step of [`reconstruct_absorb`]: `leaf_links_to(a2, nt, succ)`

@@ -2071,8 +2071,8 @@ pub(crate) proof fn lemma_frame_inv_range_dedupe<T: Copy, I: IndexLike>(
         vstd::seq_lib::to_multiset_contains(dd, x);
     }
     // Every folded entry is an old-stratum entry (through the dedupe).
-    assert forall|k: int| 0 <= k < r.len() implies exists|p: int|
-        0 <= p < sold.len() && #[trigger] r[k] == sold[p]
+    assert forall|k: int| #![trigger r[k]] 0 <= k < r.len() implies exists|p: int| #![trigger sold[p]]
+        0 <= p < sold.len() && r[k] == sold[p]
         && first_hitter::<T, I>(sold, 0, p, sold[p].1.as_nat()) by {
         assert(r.contains(r[k]));
         assert(dd.contains(r[k]));
@@ -2085,8 +2085,8 @@ pub(crate) proof fn lemma_frame_inv_range_dedupe<T: Copy, I: IndexLike>(
     assert forall|k: int| lo <= k < lo + kept implies
         (#[trigger] dnew[k]).1.as_nat() < saved_len by {
         assert(r[k - lo] == dnew[k]);
-        let p = choose|p: int| 0 <= p < sold.len()
-            && #[trigger] r[k - lo] == sold[p]
+        let p = choose|p: int| #![trigger sold[p]] 0 <= p < sold.len()
+            && r[k - lo] == sold[p]
             && first_hitter::<T, I>(sold, 0, p, sold[p].1.as_nat());
         assert(sold[p] == dold[lo + p]);
     }
@@ -2099,8 +2099,8 @@ pub(crate) proof fn lemma_frame_inv_range_dedupe<T: Copy, I: IndexLike>(
             let k = choose|k: int| lo <= k < lo + kept && 0 <= k < dnew.len()
                 && (#[trigger] dnew[k]).1.as_nat() == j as nat;
             assert(r[k - lo] == dnew[k]);
-            let p = choose|p: int| 0 <= p < sold.len()
-                && #[trigger] r[k - lo] == sold[p]
+            let p = choose|p: int| #![trigger sold[p]] 0 <= p < sold.len()
+                && r[k - lo] == sold[p]
                 && first_hitter::<T, I>(sold, 0, p, sold[p].1.as_nat());
             assert(sold[p] == dold[lo + p]);
             assert(captured_in_range::<T, I>(dold, lo, lo + m as int, j as nat));
@@ -7588,7 +7588,7 @@ where
         &&& self.hot_value_pool@.len() == pre.hot_value_pool@.len()
         &&& forall|q: int| pre.hot_retirement_cut(count + 1) <= q < pre.hot_value_pool@.len() ==>
             #[trigger] self.hot_value_pool@[q] == pre.hot_value_pool@[q]
-        &&& forall|f: int| 0 <= f <= count && f < pre.hot_stack@.len() ==> {
+        &&& forall|f: int| #![trigger pre.phys_hot_start(f)] #![trigger pre.phys_hot_end(f)] 0 <= f <= count && f < pre.hot_stack@.len() ==> {
             &&& stratum_unique::<T, I>(self.hot_value_pool@, pre.phys_hot_start(f), pre.phys_hot_end(f))
             &&& forall|j: nat| #[trigger] range_saved_value::<T, I>(self.hot_value_pool@,
                     pre.phys_hot_start(f), pre.phys_hot_end(f), j)
@@ -7736,7 +7736,7 @@ where
         assert(pre.phys_hot_start(f) == start);
         assert(pre.phys_hot_end(f) == end);
         lemma_unique_range_permutation::<T, I>(before, self.hot_value_pool@, start, end);
-        assert forall|g: int| 0 <= g <= f && g < pre.hot_stack@.len() implies {
+        assert forall|g: int| #![trigger pre.phys_hot_start(g)] #![trigger pre.phys_hot_end(g)] 0 <= g <= f && g < pre.hot_stack@.len() implies {
             &&& stratum_unique::<T, I>(self.hot_value_pool@, pre.phys_hot_start(g), pre.phys_hot_end(g))
             &&& forall|j: nat| #[trigger] range_saved_value::<T, I>(self.hot_value_pool@,
                     pre.phys_hot_start(g), pre.phys_hot_end(g), j)
@@ -8176,7 +8176,7 @@ where
             #[trigger] self.hot_value_pool@[q] == pre.hot_value_pool@[q] by {
             assert(pre.hot_retirement_cut(f as nat + 1) <= q);
         }
-        assert forall|g: int| 0 <= g <= f + 1 && g < pre.hot_stack@.len() implies {
+        assert forall|g: int| #![trigger pre.phys_hot_start(g)] #![trigger pre.phys_hot_end(g)] 0 <= g <= f + 1 && g < pre.hot_stack@.len() implies {
             &&& stratum_unique::<T, I>(self.hot_value_pool@, pre.phys_hot_start(g), pre.phys_hot_end(g))
             &&& forall|j: nat| #[trigger] range_saved_value::<T, I>(self.hot_value_pool@,
                     pre.phys_hot_start(g), pre.phys_hot_end(g), j)
@@ -15306,7 +15306,7 @@ where
                     },
         ensures
             forall|c: int| 0 <= c < ln && c < self.snapshots@[k].len() as int
-                ==> data_after[c] == self.snapshots@[k][c],
+                ==> (#[trigger] data_after[c]) == self.snapshots@[k][c],
     {
         // layer_above_at(k) == snapshots[k+1] since k+1 < trail_frames.len().
         assert(self.layer_above_at(k) == self.snapshots@[k + 1]);
@@ -15451,12 +15451,12 @@ where
                     },
         ensures
             forall|c: int| 0 <= c < self.snapshots@[f].len() as int
-                ==> data_after[c] == self.snapshots@[f][c],
+                ==> (#[trigger] data_after[c]) == self.snapshots@[f][c],
     {
         // layer_above_at(f) == snapshots[f+1] since f+1 < trail_frames.len().
         assert(self.layer_above_at(f) == self.snapshots@[f + 1]);
         assert forall|c: int| 0 <= c < self.snapshots@[f].len() as int implies
-            data_after[c] == self.snapshots@[f][c] by {
+            (#[trigger] data_after[c]) == self.snapshots@[f][c] by {
             // cold_reconstructs(f) at c (c < g_saved_len(f) == snapshots[f].len()).
             // Fire its quantifier via the cold_value(f,c) trigger term.
             assert(self.g_saved_len(f) == self.snapshots@[f].len());

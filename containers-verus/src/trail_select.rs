@@ -13,8 +13,8 @@ pub(crate) open spec fn dedupe_prefix<T, I: IndexLike>(
     pool: Seq<(T, I)>, start: int, q: int, out: Seq<(T, I)>, lo: int,
 ) -> bool {
     &&& 0 <= lo <= out.len()
-    &&& forall|k: int| lo <= k < out.len() ==> exists|p: int| start <= p < q
-        && (#[trigger] out[k]) == pool[p]
+    &&& forall|k: int| #![trigger out[k]] lo <= k < out.len() ==> exists|p: int| #![trigger pool[p]] start <= p < q
+        && out[k] == pool[p]
         && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat())
     &&& forall|p: int| start <= p < q
         && crate::vec::first_hitter::<T, I>(pool, start, p, (#[trigger] pool[p]).1.as_nat())
@@ -54,7 +54,7 @@ pub(crate) proof fn lemma_dedupe_saved_value<T, I: IndexLike>(
             if crate::vec::captured_in_range::<T, I>(out, lo, hi, j) {
                 let k = choose|k: int| lo <= k < hi && 0 <= k < out.len()
                     && (#[trigger] out[k]).1.as_nat() == j;
-                let p = choose|p: int| start <= p < end && (#[trigger] out[k]) == pool[p]
+                let p = choose|p: int| #![trigger pool[p]] start <= p < end && out[k] == pool[p]
                     && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat());
                 assert(pool[p].1.as_nat() == j);
             }
@@ -130,7 +130,7 @@ pub(crate) proof fn lemma_dedupe_push<T, I: IndexLike>(
     let n = pre.len() as int;
     assert forall|k: int| lo <= k < n implies
         (#[trigger] out[k]).1.as_nat() != pool[q].1.as_nat() by {
-        let p = choose|p: int| start <= p < q && (#[trigger] pre[k]) == pool[p]
+        let p = choose|p: int| #![trigger pool[p]] start <= p < q && pre[k] == pool[p]
             && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat());
         assert(pool[p].1.as_nat() != pool[q].1.as_nat());
     }
@@ -141,11 +141,11 @@ pub(crate) proof fn lemma_dedupe_push<T, I: IndexLike>(
             assert(out[b] == pre[b]);
         }
     }
-    assert forall|k: int| lo <= k < n + 1 implies exists|p: int| start <= p < q + 1
-        && (#[trigger] out[k]) == pool[p]
+    assert forall|k: int| #![trigger out[k]] lo <= k < n + 1 implies exists|p: int| #![trigger pool[p]] start <= p < q + 1
+        && out[k] == pool[p]
         && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat()) by {
         if k < n {
-            let p = choose|p: int| start <= p < q && (#[trigger] pre[k]) == pool[p]
+            let p = choose|p: int| #![trigger pool[p]] start <= p < q && pre[k] == pool[p]
                 && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat());
             assert(out[k] == pool[p]);
         } else {
@@ -173,10 +173,10 @@ pub(crate) proof fn lemma_dedupe_skip<T, I: IndexLike>(
         !crate::vec::first_hitter::<T, I>(pool, start, q, pool[q].1.as_nat()),
     ensures dedupe_prefix::<T, I>(pool, start, q + 1, out, lo),
 {
-    assert forall|k: int| lo <= k < out.len() implies exists|p: int| start <= p < q + 1
-        && (#[trigger] out[k]) == pool[p]
+    assert forall|k: int| #![trigger out[k]] lo <= k < out.len() implies exists|p: int| #![trigger pool[p]] start <= p < q + 1
+        && out[k] == pool[p]
         && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat()) by {
-        let p = choose|p: int| start <= p < q && (#[trigger] out[k]) == pool[p]
+        let p = choose|p: int| #![trigger pool[p]] start <= p < q && out[k] == pool[p]
             && crate::vec::first_hitter::<T, I>(pool, start, p, pool[p].1.as_nat());
     }
     assert forall|p: int| start <= p < q + 1

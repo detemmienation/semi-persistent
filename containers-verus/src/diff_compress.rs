@@ -2068,7 +2068,7 @@ pub(crate) fn compress_runs_sorted_core<T: IndexLike, I: IndexFromNat>(diffs: &V
     proof {
         // Strictly ascending: sorted gives <=, uniqueness upgrades to <.
         assert forall|a: int, b: int| 0 <= a < b < usized@.len() implies
-            usized@[a].1 < usized@[b].1 by {
+            (#[trigger] usized@[a]).1 < (#[trigger] usized@[b]).1 by {
             assert(s@[a].1.as_nat() <= s@[b].1.as_nat());
             assert(s@[a].1.as_nat() != s@[b].1.as_nat());
             assert(usized@[a].1 as nat == s@[a].1.as_nat());
@@ -2081,7 +2081,7 @@ pub(crate) fn compress_runs_sorted_core<T: IndexLike, I: IndexFromNat>(diffs: &V
         // decode_i maps each nat back via from_nat, recovering s exactly.
         assert(usized@.len() == s@.len());
         assert forall|t: int| 0 <= t < s@.len() implies
-            rf.decode()[t] == (s@[t].0, s@[t].1.as_nat()) by {
+            (#[trigger] rf.decode()[t]) == (s@[t].0, s@[t].1.as_nat()) by {
             assert(rf.decode()[t] == (usized@[t].0, usized@[t].1 as nat));
         }
         assert forall|t: int| 0 <= t < rf.decode().len() implies
@@ -2237,7 +2237,7 @@ pub fn runs_writeorder_frame<T: IndexLike, I: IndexFromNat>(diffs: &Vec<(T, I)>)
     proof {
         assert(usized@.len() == diffs@.len());
         assert forall|t: int| 0 <= t < diffs@.len() implies
-            rf.decode()[t] == (diffs@[t].0, diffs@[t].1.as_nat()) by {
+            (#[trigger] rf.decode()[t]) == (diffs@[t].0, diffs@[t].1.as_nat()) by {
             assert(rf.decode()[t] == (usized@[t].0, usized@[t].1 as nat));
         }
         // fits: every decoded index is some diffs[t].1.as_nat() < max_nat.
@@ -3166,7 +3166,7 @@ impl<T: Copy, I: IndexLike> CompressedFrame<T, I> for RunCol<T, I> {
                 dst.copy_from_slice(src);
                 proof {
                     assert forall|j: int| 0 <= j < target@.len() implies
-                        target@[j] == crate::cold_stack::write_block(
+                        (#[trigger] target@[j]) == crate::cold_stack::write_block(
                             cur, start.as_nat(), vals)[j] by {
                         if su as int <= j && j < su as int + cl as int {
                             assert(target@[j] == src@[j - su as int]);

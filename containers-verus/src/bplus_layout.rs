@@ -224,9 +224,9 @@ pub(crate) fn arr_shift_up<T: Copy, const N: usize>(a: &mut [T; N], pos: usize, 
             pos <= j <= cnt,
             cnt < N,
             a@.len() == original.len(),
-            forall|k: int| 0 <= k <= j ==> a@[k] == original[k],
+            forall|k: int| 0 <= k <= j ==> (#[trigger] a@[k]) == original[k],
             forall|k: int| j < k <= cnt ==> a@[k] == original[k - 1],
-            forall|k: int| cnt < k < N ==> a@[k] == original[k],
+            forall|k: int| cnt < k < N ==> (#[trigger] a@[k]) == original[k],
         decreases j - pos,
     {
         let prev = arr_get(a, j - 1);
