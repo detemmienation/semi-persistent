@@ -1652,7 +1652,19 @@ where
         // memoization a pair shared by several paths is re-expanded once per
         // path, which is exponential on diamond-shaped explanation structure
         // (a two-assertion Boolean-congruence input ran for over 15 seconds
-        // before these sets were added). Two sets, because the two guards
+        // before these sets were added). Worse than exponential: it can fail
+        // to terminate. A congruence step's premises are the two nodes'
+        // ORIGINAL children, which predate recanonization, and their present
+        // equality can route through the very congruence edge the collision
+        // produced. Without a record of expanded pairs the walk re-emits that
+        // edge, expands it again, and loops forever (measured past 2 million
+        // steps and 16 GB on the SMT regression
+        // `edge_cases/boolean_backtracking.smt2`, a Boolean child oscillating
+        // across backtracks). With the sets every congruence pair is expanded
+        // at most once and every pair's forest path is appended at most once,
+        // so the step list is bounded by the number of distinct pairs times
+        // the longest forest path, whatever shape the forest has.
+        // Two sets, because the two guards
         // protect different work: `expanded` marks congruence steps whose
         // child pairs have been walked; `explained` marks pairs whose forest
         // path is already in `buf.steps`. A congruence pair must not seed

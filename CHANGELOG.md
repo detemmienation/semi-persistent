@@ -52,6 +52,13 @@
 
 ### Changed
 
+- `explain_deep`'s memoization is now recorded in full: the code comment,
+  design chapter 15 and a regression test (`deep_proof_diamond_is_linear`)
+  state both failure modes the two pair sets prevent, exponential
+  re-expansion on diamonds and non-termination when a congruence step's
+  original-children pair routes through that same edge, with the termination
+  bound that follows.
+
 - `reconstruct_parent_split` (B+ tree) is three proofs instead of one: the
   link splice and the footprint reasoning moved into
   `reconstruct_parent_split_links` and `reconstruct_parent_split_ids`, and the
