@@ -1286,6 +1286,280 @@ macro_rules! abstract_domain {
             }
 
             // ============================================================
+            // Helpers for Congruence and Strided
+            // ============================================================
+
+            /// Returns true if d is a positive common divisor of a and b.
+            /// A common divisor divides both a and b without a remainder.
+            pub open spec fn is_common_divisor(d: nat, a: nat, b: nat) -> bool {
+                d > 0 && a % d == 0 && b % d == 0
+            }
+
+            /// Returns true if d is the greatest common divisor of a and b.
+            /// The special case gcd(0, 0) = 0 is handled separately.
+            pub open spec fn is_gcd(d: nat, a: nat, b: nat) -> bool {
+                if a == 0 && b == 0 {
+                    d == 0
+                } else {
+                    is_common_divisor(d, a, b)
+                    && forall|k: nat|
+                        is_common_divisor(k, a, b) ==> k <= d
+                }
+            }
+
+            /// Proves that a Euclidean step preserves common divisors.
+            pub proof fn euclidean_step(a: nat, b: nat, d: nat)
+                requires
+                    b > 0,
+                    d > 0,
+                ensures
+                    is_common_divisor(d, a, b)
+                        <==> is_common_divisor(d, b, a % b),
+            {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    a as int,
+                    b as int,
+                );
+
+                if is_common_divisor(d, a, b) {
+                    assert(a % d == 0);
+                    assert(b % d == 0);
+
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                        a as int,
+                        d as int,
+                    );
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                        b as int,
+                        d as int,
+                    );
+
+                    assert((a % b) % d == 0) by {
+                        let ai = a as int;
+                        let bi = b as int;
+                        let di = d as int;
+
+                        assert(di > 0);
+                        assert(bi > 0);
+
+                        assert(ai % di == 0);
+                        assert(bi % di == 0);
+
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(ai, bi);
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(ai, di);
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(bi, di);
+
+                        let q = ai / bi;
+                        let ad = ai / di;
+                        let bd = bi / di;
+                        let k = ad - q * bd;
+
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(bi, q);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(di, ad);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(di, bd);
+                        assert(ai == q * bi + ai % bi);
+                        assert(ai == ad * di);
+                        assert(bi == bd * di);
+
+                        assert((a % b) as int == k * di) by (nonlinear_arith)
+                            requires
+                                ai == q * bi + ai % bi,
+                                ai == ad * di,
+                                bi == bd * di,
+                                (a % b) as int == ai % bi,
+                                k == ad - q * bd,
+                        {
+                        }
+
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                            (a % b) as int,
+                            di,
+                            k,
+                            0,
+                        );
+
+                        assert(((a % b) as int) % di == 0);
+                    }
+
+                    assert(is_common_divisor(d, b, a % b));
+                }
+
+                if is_common_divisor(d, b, a % b) {
+                    assert(b % d == 0);
+                    assert((a % b) % d == 0);
+
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                        b as int,
+                        d as int,
+                    );
+
+                    assert(a % d == 0) by {
+                        let ai = a as int;
+                        let bi = b as int;
+                        let di = d as int;
+                        let ri = (a % b) as int;
+
+                        let q = ai / bi;
+                        let bd = bi / di;
+                        let rd = ri / di;
+                        let k = q * bd + rd;
+
+                        assert(di > 0);
+                        assert(bi > 0);
+                        assert(bi % di == 0);
+                        assert(ri % di == 0);
+
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(ai, bi);
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(bi, di);
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(ri, di);
+
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(bi, q);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(di, bd);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(di, rd);
+
+                        assert(ai == q * bi + ri);
+                        assert(bi == bd * di);
+                        assert(ri == rd * di);
+
+                        assert(ai == k * di) by (nonlinear_arith)
+                            requires
+                                ai == q * bi + ri,
+                                bi == bd * di,
+                                ri == rd * di,
+                                k == q * bd + rd,
+                        {
+                        }
+
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                            ai,
+                            di,
+                            k,
+                            0,
+                        );
+
+                        assert(ai % di == 0);
+                    };
+
+                    assert(is_common_divisor(d, a, b));
+                }
+            }
+
+
+            /// Euclidean GCD algorithm.
+            /// Computes the greatest common divisor using the Euclidean algorithm
+            pub fn gcd(input_a: $uint, input_b: $uint) -> (result: $uint)
+                ensures
+                    is_gcd(result as nat, input_a as nat, input_b as nat),
+            {
+                let mut a = input_a;
+                let mut b = input_b;
+
+                let original_a = a;
+                let original_b = b;
+
+                while b != 0
+                    invariant
+                        a as nat <= $max_val as nat,
+                        b as nat <= $max_val as nat,
+                        (a == 0 && b == 0) <==> (original_a == 0 && original_b == 0),
+                        forall|d: nat| d > 0 ==>
+                            (is_common_divisor(d, original_a as nat, original_b as nat)
+                                <==> is_common_divisor(d, a as nat, b as nat)),
+                    decreases b,
+                {
+                    let remainder = a % b;
+
+                    proof {
+                        assert forall|d: nat| d > 0 implies
+                            (is_common_divisor(d, original_a as nat, original_b as nat)
+                                <==> is_common_divisor(d, b as nat, remainder as nat))
+                        by {
+                            euclidean_step(a as nat, b as nat, d);
+                        }
+                    }
+
+                    a = b;
+                    b = remainder;
+                }
+                proof {
+                    if a == 0 {
+                        let d: nat = $max_val as nat + 1;
+
+                        assert(is_common_divisor(d, 0, 0));
+
+                        assert(is_common_divisor(
+                            d,
+                            original_a as nat,
+                            original_b as nat,
+                        ));
+
+                        assert((original_a as nat) < d);
+                        assert((original_b as nat) < d);
+
+                        assert(original_a == 0 && original_b == 0);
+                        assert(input_a == 0 && input_b == 0);
+
+                        assert(is_gcd(0, input_a as nat, input_b as nat));
+                    } else {
+                        assert(is_common_divisor(
+                            a as nat,
+                            original_a as nat,
+                            original_b as nat,
+                        ));
+
+                        assert forall|d: nat|
+                            is_common_divisor(
+                                d,
+                                original_a as nat,
+                                original_b as nat,
+                            ) implies d <= a as nat
+                        by {
+                            assert(is_common_divisor(d, a as nat, 0));
+                            assert(d > 0);
+                            assert((a as nat) > 0);
+                            assert((a as nat) % d == 0);
+                            assert(d <= a as nat) by (nonlinear_arith)
+                                requires
+                                    (a as nat) > 0,
+                                    d > 0,
+                                    (a as nat) % d == 0,
+                            {
+                            }
+                        }
+
+                        assert(original_a == input_a);
+                        assert(original_b == input_b);
+                        assert(input_a != 0 || input_b != 0);
+
+                        assert(is_common_divisor(
+                            a as nat,
+                            input_a as nat,
+                            input_b as nat,
+                        ));
+
+                        assert forall|d: nat|
+                            is_common_divisor(
+                                d,
+                                input_a as nat,
+                                input_b as nat,
+                            ) implies d <= a as nat
+                        by {
+                            assert(original_a == input_a);
+                            assert(original_b == input_b);
+                        }
+
+                        assert(is_gcd(
+                            a as nat,
+                            input_a as nat,
+                            input_b as nat,
+                        ));
+                    }
+                }
+                a
+            }
+
+
+            // ============================================================
             // Congruence
             // ============================================================
             pub type Congruence = crate::congruence::Congruence<$uint>;
