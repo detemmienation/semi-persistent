@@ -1418,6 +1418,127 @@ macro_rules! abstract_domain {
                         }
                     }
                 }
+
+                /// Sound join: exact when both sides agree on a nonzero
+                /// stride and residue class, or are two distinct
+                /// singletons (a two-point stride is exact too). Anything
+                /// else -- mismatched strides, incompatible residues --
+                /// falls back to top(). Getting that case exact needs gcd
+                /// (Yuting's shared helper, not landed yet); Week 5 only
+                /// requires join to be sound, not tight.
+                /// d64 alone needs more than the default rlimit for the
+                /// same-residue-class nonlinear reasoning below; d8/d16/d32
+                /// pass at the default. Bump for all four rather than
+                /// special-casing one width.
+                #[verifier::rlimit(30)]
+                pub fn join(&self, t: &StridedInterval) -> (r: StridedInterval)
+                    requires self.wf(), t.wf()
+                    ensures r.wf(),
+                        forall|x: $uint| #![auto] self.has(x) ==> r.has(x),
+                        forall|x: $uint| #![auto] t.has(x) ==> r.has(x)
+                {
+                    match self {
+                        StridedInterval::Bottom => *t,
+                        StridedInterval::Value { stride: s1, lo: l1, hi: h1 } => {
+                            match t {
+                                StridedInterval::Bottom => *self,
+                                StridedInterval::Value { stride: s2, lo: l2, hi: h2 } => {
+                                    let (s1, l1, h1) = (*s1, *l1, *h1);
+                                    let (s2, l2, h2) = (*s2, *l2, *h2);
+                                    let abs_diff = if l1 >= l2 { l1 - l2 } else { l2 - l1 };
+                                    if s1 == s2 && s1 != 0 && abs_diff % s1 == 0 {
+                                        let lo = if l1 < l2 { l1 } else { l2 };
+                                        let hi = if h1 > h2 { h1 } else { h2 };
+                                        let result = StridedInterval::Value { stride: s1, lo, hi };
+                                        proof {
+                                            // abs_diff % s1 == 0 (native, checked above) implies
+                                            // (l1 - l2) % s1 == 0 at the int level regardless of
+                                            // which of l1, l2 is larger -- cover both signs once,
+                                            // up front, instead of inside each has()-implication.
+                                            let m = abs_diff as int / (s1 as int);
+                                            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_diff as int, s1 as int);
+                                            assert(abs_diff as int % (s1 as int) == 0);
+                                            assert(abs_diff as int == s1 as int * m);
+                                            vstd::arithmetic::mul::lemma_mul_unary_negation(s1 as int, m);
+                                            // now (-(s1 as int)) * m == -(s1 as int * m) == (s1 as int) * (-m)
+                                            if l1 >= l2 {
+                                                assert(abs_diff as int == l1 as int - l2 as int);
+                                                assert((l1 as int - l2 as int) == s1 as int * m);
+                                            } else {
+                                                assert(abs_diff as int == l2 as int - l1 as int);
+                                                assert((l1 as int - l2 as int) == s1 as int * (-m));
+                                            }
+                                            assert forall|x: $uint| #![auto] self.has(x) implies result.has(x) by {
+                                                if l1 <= x && x <= h1 && (x as int - l1 as int) % (s1 as int) == 0 {
+                                                    if lo == l2 {
+                                                        // x - l2 == (x - l1) + (l1 - l2) == s1*k1 + s1*m' == s1*(k1+m')
+                                                        let k1 = (x as int - l1 as int) / (s1 as int);
+                                                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int - l1 as int, s1 as int);
+                                                        if l1 >= l2 {
+                                                            vstd::arithmetic::mul::lemma_mul_is_distributive_add(s1 as int, k1, m);
+                                                            assert((x as int - l2 as int) == s1 as int * (k1 + m));
+                                                            vstd::arithmetic::mul::lemma_mul_is_commutative(s1 as int, k1 + m);
+                                                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k1 + m, s1 as int);
+                                                        } else {
+                                                            vstd::arithmetic::mul::lemma_mul_is_distributive_sub(s1 as int, k1, m);
+                                                            assert((x as int - l2 as int) == s1 as int * (k1 - m));
+                                                            vstd::arithmetic::mul::lemma_mul_is_commutative(s1 as int, k1 - m);
+                                                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k1 - m, s1 as int);
+                                                        }
+                                                    }
+                                                }
+                                            };
+                                            assert forall|x: $uint| #![auto] t.has(x) implies result.has(x) by {
+                                                if l2 <= x && x <= h2 && (x as int - l2 as int) % (s1 as int) == 0 {
+                                                    if lo == l1 {
+                                                        // x - l1 == (x - l2) + (l2 - l1) == s1*k2 - s1*m' == s1*(k2-m') (or +m' if l1<l2)
+                                                        let k2 = (x as int - l2 as int) / (s1 as int);
+                                                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int - l2 as int, s1 as int);
+                                                        if l1 >= l2 {
+                                                            vstd::arithmetic::mul::lemma_mul_is_distributive_sub(s1 as int, k2, m);
+                                                            assert((x as int - l1 as int) == s1 as int * (k2 - m));
+                                                            vstd::arithmetic::mul::lemma_mul_is_commutative(s1 as int, k2 - m);
+                                                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k2 - m, s1 as int);
+                                                        } else {
+                                                            vstd::arithmetic::mul::lemma_mul_is_distributive_add(s1 as int, k2, m);
+                                                            assert((x as int - l1 as int) == s1 as int * (k2 + m));
+                                                            vstd::arithmetic::mul::lemma_mul_is_commutative(s1 as int, k2 + m);
+                                                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k2 + m, s1 as int);
+                                                        }
+                                                    }
+                                                }
+                                            };
+                                        }
+                                        result
+                                    } else if s1 == 0 && s2 == 0 && l1 == l2 {
+                                        *self
+                                    } else if s1 == 0 && s2 == 0 {
+                                        let lo = if l1 < l2 { l1 } else { l2 };
+                                        let hi = if l1 > l2 { l1 } else { l2 };
+                                        let stride = hi - lo;
+                                        let result = StridedInterval::Value { stride, lo, hi };
+                                        proof {
+                                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(0, stride as int);
+                                            vstd::arithmetic::div_mod::lemma_mod_self_0(stride as int);
+                                        }
+                                        result
+                                    } else {
+                                        let result = StridedInterval::Value { stride: 1, lo: 0, hi: !(0 as $uint) };
+                                        proof {
+                                            assert forall|x: $uint| #![auto] self.has(x) implies result.has(x) by {
+                                                Self::top_has(x);
+                                            };
+                                            assert forall|x: $uint| #![auto] t.has(x) implies result.has(x) by {
+                                                Self::top_has(x);
+                                            };
+                                        }
+                                        result
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // ============================================================
