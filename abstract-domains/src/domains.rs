@@ -2549,7 +2549,7 @@ macro_rules! abstract_domain {
             pub enum CrtMergeResult {
                 Merged { modulus: $uint, residue: $uint },
                 Incompatible,
-                ModulusOverflow,
+                ModulusOverflow { wide_residue: u128 },
             }
 
             /// Merge modular constraints, distinguishing incompatibility from LCM overflow.
@@ -2582,7 +2582,7 @@ macro_rules! abstract_domain {
                             forall|x: int| !#[trigger] is_common_congruence_solution(
                                 x, m1 as nat, r1 as nat, m2 as nat, r2 as nat,
                             ),
-                        CrtMergeResult::ModulusOverflow =>
+                        CrtMergeResult::ModulusOverflow { wide_residue: residue } =>
                             (exists|g: nat|
                                 is_gcd(g, m1 as nat, m2 as nat)
                                 && are_congruences_compatible(g, r1 as nat, r2 as nat)
@@ -2592,7 +2592,16 @@ macro_rules! abstract_domain {
                                     x as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
                                 && is_common_congruence_solution(
                                     y as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
-                                ==> x == y),
+                                ==> x == y)
+                            && (exists|g: nat|
+                                is_gcd(g, m1 as nat, m2 as nat)
+                                && residue < ((m1 as nat) / g) * (m2 as nat))
+                            && is_common_congruence_solution(
+                                residue as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
+                            && (forall|x: $uint|
+                                #[trigger] is_common_congruence_solution(
+                                    x as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
+                                <==> x as u128 == residue),
                     },
             {
                 let a1 = r1 % m1;
@@ -2644,38 +2653,17 @@ macro_rules! abstract_domain {
                     return CrtMergeResult::Incompatible;
                 }
 
-                let lcm = match checked_lcm(m1, m2) {
-                    Some(v) => v,
-                    None => {
-                        proof {
-                            let d = choose|d: nat| is_gcd(d, m1 as nat, m2 as nat)
-                                && ((m1 as nat) / d) * (m2 as nat) > $max_val as nat;
-                            gcd_unique(g as nat, d, m1 as nat, m2 as nat);
-                            normalize_preserves_divisor(r1 as nat, m1 as nat, g as nat);
-                            normalize_preserves_divisor(r2 as nat, m2 as nat, g as nat);
-                            assert(are_congruences_compatible(g as nat, r1 as nat, r2 as nat));
-                            assert forall|x: $uint, y: $uint| #![auto]
-                                is_common_congruence_solution(
-                                    x as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
-                                && is_common_congruence_solution(
-                                    y as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
-                                implies x == y by {
-                                crt_overflow_unique(x, y, m1 as nat, r1 as nat,
-                                    m2 as nat, r2 as nat, g as nat, s as int, _t as int);
-                            }
-                        }
-                        return CrtMergeResult::ModulusOverflow;
-                    },
-                };
-
+                // The exact LCM of two at-most-u64 moduli fits in u128.
+                let reduced = (m1 / g) as u128;
+                let m2_wide = m2 as u128;
                 proof {
-                    let d = choose|d: nat| is_gcd(d, m1 as nat, m2 as nat)
-                        && lcm as nat == ((m1 as nat) / d) * (m2 as nat);
-                    positive_exact_quotient(m1 as nat, d);
-                    assert(lcm > 0) by (nonlinear_arith)
-                        requires (m1 as nat) / d > 0, m2 > 0,
-                            lcm as nat == ((m1 as nat) / d) * (m2 as nat);
+                    positive_exact_quotient(m1 as nat, g as nat);
+                    assert(reduced * m2_wide <= u128::MAX) by (nonlinear_arith)
+                        requires reduced <= u64::MAX, m2_wide <= u64::MAX;
+                    assert(reduced * m2_wide > 0) by (nonlinear_arith)
+                        requires reduced > 0, m2_wide > 0;
                 }
+                let lcm = reduced * m2_wide;
 
                 // Bézout gives the inverse s of m1/g modulo n = m2/g.
 
@@ -2810,7 +2798,7 @@ macro_rules! abstract_domain {
                     assert(residue_wide < lcm_wide);
                 }
 
-                let residue = residue_wide as $uint;
+                let residue = residue_wide;
 
                 proof {
                     assert(residue < lcm);
@@ -2853,7 +2841,31 @@ macro_rules! abstract_domain {
                     ));
                 }
 
-                CrtMergeResult::Merged { modulus: lcm, residue }
+                if lcm > $max_val as u128 {
+                    proof {
+                        normalize_preserves_divisor(r1 as nat, m1 as nat, g as nat);
+                        normalize_preserves_divisor(r2 as nat, m2 as nat, g as nat);
+                        assert(are_congruences_compatible(g as nat, r1 as nat, r2 as nat));
+                        assert forall|x: $uint|
+                            #[trigger] is_common_congruence_solution(
+                                x as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
+                            <==> x as u128 == residue by {
+                            vstd::arithmetic::div_mod::lemma_small_mod(x as nat, lcm as nat);
+                        }
+                        assert forall|x: $uint, y: $uint| #![auto]
+                            is_common_congruence_solution(
+                                x as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
+                            && is_common_congruence_solution(
+                                y as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat)
+                            implies x == y by {
+                            crt_overflow_unique(x, y, m1 as nat, r1 as nat,
+                                m2 as nat, r2 as nat, g as nat, s as int, _t as int);
+                        }
+                    }
+                    CrtMergeResult::ModulusOverflow { wide_residue: residue }
+                } else {
+                    CrtMergeResult::Merged { modulus: lcm as $uint, residue: residue as $uint }
+                }
             }
 
             // ============================================================
