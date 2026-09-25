@@ -1558,6 +1558,292 @@ macro_rules! abstract_domain {
                 a
             }
 
+            /// Returns true if g, x, and y satisfy Bézout's identity for a and b.
+            pub open spec fn is_extended_gcd(
+                g: nat,
+                x: int,
+                y: int,
+                a: nat,
+                b: nat,
+            ) -> bool {
+                is_gcd(g, a, b)
+                    && x * a as int + y * b as int == g as int
+            }
+
+            /// Computes the GCD and Bézout coefficients.
+            pub fn extended_gcd(a: $uint, b: $uint) -> (result: ($uint, i128, i128))
+                ensures
+                    is_extended_gcd(
+                        result.0 as nat,
+                        result.1 as int,
+                        result.2 as int,
+                        a as nat,
+                        b as nat,
+                    ),
+                    b == 0 ==> result.1 == 1 && result.2 == 0,
+                    b != 0 ==> -(b as int) <= result.1 as int <= b as int,
+                    a != 0 ==> -(a as int) <= result.2 as int <= a as int,
+                decreases b,
+            {
+                if b == 0 {
+                    proof {
+                        if a == 0 {
+                            // Special case: gcd(0, 0) = 0.
+                            assert(is_gcd(0, 0, 0));
+                        } else {
+                            let an = a as nat;
+
+                            // a is a positive common divisor of (a, 0).
+                            assert(an > 0);
+                            assert(an % an == 0);
+                            assert(0nat % an == 0);
+                            assert(is_common_divisor(an, an, 0));
+
+                            // Every positive divisor of a is at most a.
+                            assert forall|k: nat|
+                                is_common_divisor(k, an, 0) implies k <= an
+                            by {
+                                assert(k > 0);
+                                assert(an % k == 0);
+
+                                assert(k <= an) by (nonlinear_arith)
+                                    requires
+                                        an > 0,
+                                        k > 0,
+                                        an % k == 0,
+                                {
+                                }
+                            }
+
+                            assert(is_gcd(an, an, 0));
+                        }
+
+                        assert(is_gcd(a as nat, a as nat, 0));
+
+                        // Bézout identity: 1*a + 0*0 = a.
+                        assert(is_extended_gcd(
+                            a as nat,
+                            1,
+                            0,
+                            a as nat,
+                            0,
+                        ));
+                    }
+
+                    (a, 1i128, 0i128)
+                } else {
+                    let r = a % b;
+                    let (g, x1, y1) = extended_gcd(b, r);
+
+                    proof {
+                        // The Euclidean step preserves positive common divisors.
+                        assert forall|d: nat| d > 0 implies
+                            (is_common_divisor(d, a as nat, b as nat)
+                                <==> is_common_divisor(d, b as nat, r as nat))
+                        by {
+                            euclidean_step(a as nat, b as nat, d);
+                        }
+
+                        assert(is_gcd(g as nat, b as nat, r as nat));
+                        assert(is_gcd(g as nat, a as nat, b as nat));
+                    }
+
+                    if r == 0 {
+                        // The recursive call is extended_gcd(b, 0).
+                        // Its coefficients are (1, 0), so g = b.
+                        proof {
+                            assert(x1 == 1);
+                            assert(y1 == 0);
+
+                            assert(
+                                (x1 as int) * (b as int)
+                                    + (y1 as int) * 0
+                                    == g as int
+                            );
+
+                            assert(g == b) by (nonlinear_arith)
+                                requires
+                                    (x1 as int) * (b as int)
+                                        + (y1 as int) * 0
+                                        == g as int,
+                                    x1 == 1,
+                            {
+                            }
+                        }
+
+                        proof {
+                            assert(is_gcd(g as nat, a as nat, b as nat));
+                            assert(g == b);
+
+                            assert(is_extended_gcd(
+                                g as nat,
+                                0,
+                                1,
+                                a as nat,
+                                b as nat,
+                            ));
+                        }
+                        (g, 0i128, 1i128)
+                    } else {
+                        let q = (a / b) as i128;
+                        let x = y1;
+
+                        proof {
+                            let ai = a as int;
+                            let bi = b as int;
+                            let ri = r as int;
+                            let qi = q as int;
+                            let x1i = x1 as int;
+                            let y1i = y1 as int;
+
+                            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                                ai,
+                                bi,
+                            );
+
+                            assert(qi == ai / bi);
+                            assert(ri == ai % bi);
+                            assert(ai == qi * bi + ri);
+
+                            // Bounds from extended_gcd(b, r):
+                            // |x1| <= r and |y1| <= b.
+                            assert(-ri <= x1i <= ri);
+                            assert(-bi <= y1i <= bi);
+
+                            assert(0 <= qi);
+                            assert(0 <= ri);
+
+                            // Bound q*y1 before executing the i128 multiplication.
+                            assert(-ai <= qi * y1i <= ai)
+                                by (nonlinear_arith)
+                                requires
+                                    ai == qi * bi + ri,
+                                    0 <= qi,
+                                    0 <= ri,
+                                    0 <= bi,
+                                    -bi <= y1i,
+                                    y1i <= bi,
+                            {
+                            }
+                        }
+
+                        let product = q * y1;
+
+                        proof {
+                            let ai = a as int;
+                            let bi = b as int;
+                            let ri = r as int;
+                            let qi = q as int;
+                            let x1i = x1 as int;
+                            let y1i = y1 as int;
+
+                            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                                ai,
+                                bi,
+                            );
+
+                            assert(qi == ai / bi);
+                            assert(ri == ai % bi);
+                            assert(ai == qi * bi + ri);
+
+                            assert(0 <= qi);
+                            assert(0 <= ri);
+
+                            // Use the recursive bounds, not merely |product| <= a.
+                            assert(-ri <= x1i <= ri);
+                            assert(-bi <= y1i <= bi);
+
+                            assert(-qi * bi <= qi * y1i <= qi * bi)
+                                by (nonlinear_arith)
+                                requires
+                                    0 <= qi,
+                                    0 <= bi,
+                                    -bi <= y1i,
+                                    y1i <= bi,
+                            {
+                            }
+
+                            assert(product as int == qi * y1i);
+
+                            // |x1 - q*y1| <= r + q*b = a.
+                            assert(-ai <= x1i - (product as int) <= ai)
+                                by (nonlinear_arith)
+                                requires
+                                    ai == qi * bi + ri,
+                                    0 <= qi,
+                                    0 <= ri,
+                                    -ri <= x1i,
+                                    x1i <= ri,
+                                    -qi * bi <= product as int,
+                                    product as int <= qi * bi,
+                            {
+                            }
+                        }
+
+                        let y = x1 - product;
+
+                        proof {
+                            let ai = a as int;
+                            let bi = b as int;
+                            let ri = r as int;
+                            let qi = q as int;
+
+                            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                                ai,
+                                bi,
+                            );
+
+                            assert(qi == ai / bi);
+                            assert(ri == ai % bi);
+                            assert(ai == qi * bi + ri);
+
+                            // Recursive Bézout identity:
+                            // x1*b + y1*r = g.
+                            assert(
+                                (x1 as int) * bi
+                                    + (y1 as int) * ri
+                                    == g as int
+                            );
+
+                            // Substitute r = a - q*b:
+                            // y1*a + (x1 - q*y1)*b = g.
+                            assert(
+                                (x as int) * ai
+                                    + (y as int) * bi
+                                    == g as int
+                            ) by (nonlinear_arith)
+                                requires
+                                    ai == qi * bi + ri,
+                                    (x1 as int) * bi
+                                        + (y1 as int) * ri
+                                        == g as int,
+                                    x as int == y1 as int,
+                                    y as int
+                                        == x1 as int - qi * (y1 as int),
+                            {
+                            }
+                        }
+                        proof {
+                            assert(is_gcd(g as nat, a as nat, b as nat));
+
+                            assert(
+                                (x as int) * (a as int)
+                                    + (y as int) * (b as int)
+                                    == g as int
+                            );
+
+                            assert(is_extended_gcd(
+                                g as nat,
+                                x as int,
+                                y as int,
+                                a as nat,
+                                b as nat,
+                            ));
+                        }
+                        (g, x, y)
+                    }
+                }
+            }
 
             // ============================================================
             // Congruence
