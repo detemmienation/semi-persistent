@@ -2126,6 +2126,155 @@ macro_rules! abstract_domain {
                 ));
             }
 
+            /// Computes the least common multiple if it fits in the domain's
+            /// unsigned integer type.
+            pub fn checked_lcm(
+                a: $uint,
+                b: $uint,
+            ) -> (result: Option<$uint>)
+                requires
+                    a > 0,
+                    b > 0,
+                ensures
+                    match result {
+                        Some(lcm) =>
+                            exists|g: nat|
+                                is_gcd(g, a as nat, b as nat)
+                                && lcm as nat
+                                    == ((a as nat) / g) * (b as nat),
+
+                        None =>
+                            exists|g: nat|
+                                is_gcd(g, a as nat, b as nat)
+                                && ((a as nat) / g) * (b as nat)
+                                    > $max_val as nat,
+                    },
+            {
+                let g = gcd(a, b);
+
+                proof {
+                    assert(is_gcd(
+                        g as nat,
+                        a as nat,
+                        b as nat,
+                    ));
+
+                    // a and b are positive, so this is not the (0, 0) case.
+                    assert(!(a == 0 && b == 0));
+
+                    // Therefore the GCD is a positive common divisor.
+                    assert(is_common_divisor(
+                        g as nat,
+                        a as nat,
+                        b as nat,
+                    ));
+
+                    assert(g > 0);
+                    assert((a as nat) % (g as nat) == 0);
+                }
+
+                let reduced = a / g;
+
+                proof {
+                    assert(reduced as nat
+                        == (a as nat) / (g as nat));
+                }
+
+                // Check whether reduced * b fits before doing the multiplication.
+                if reduced > $max_val / b {
+                    proof {
+                        let rn = reduced as nat;
+                        let bn = b as nat;
+                        let maxn = $max_val as nat;
+
+                        assert(bn > 0);
+
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                            maxn as int,
+                            bn as int,
+                        );
+
+                        assert(
+                            rn * bn > maxn
+                        ) by (nonlinear_arith)
+                            requires
+                                rn > maxn / bn,
+                                bn > 0,
+                        {
+                        }
+
+                        assert(
+                            ((a as nat) / (g as nat)) * (b as nat)
+                                > $max_val as nat
+                        );
+
+                        assert(
+                            exists|d: nat|
+                                is_gcd(d, a as nat, b as nat)
+                                && ((a as nat) / d) * (b as nat)
+                                    > $max_val as nat
+                        ) by {
+                            assert(is_gcd(
+                                g as nat,
+                                a as nat,
+                                b as nat,
+                            ));
+                        }
+                    }
+
+                    None
+                } else {
+                    proof {
+                        let rn = reduced as nat;
+                        let bn = b as nat;
+                        let maxn = $max_val as nat;
+
+                        assert(rn <= maxn / bn);
+                        assert(bn > 0);
+
+                        assert(
+                            rn * bn <= maxn
+                        ) by (nonlinear_arith)
+                            requires
+                                rn <= maxn / bn,
+                                bn > 0,
+                        {
+                        }
+                    }
+
+                    let lcm = reduced * b;
+
+                    proof {
+                        assert(
+                            lcm as nat
+                                == (reduced as nat) * (b as nat)
+                        );
+
+                        assert(
+                            lcm as nat
+                                == ((a as nat) / (g as nat))
+                                    * (b as nat)
+                        );
+
+                        assert(
+                            exists|d: nat|
+                                is_gcd(d, a as nat, b as nat)
+                                && lcm as nat
+                                    == ((a as nat) / d)
+                                        * (b as nat)
+                        ) by {
+                            assert(is_gcd(
+                                g as nat,
+                                a as nat,
+                                b as nat,
+                            ));
+                        }
+                    }
+
+                    Some(lcm)
+                }
+            }            
+
             // ============================================================
             // Congruence
             // ============================================================
