@@ -247,6 +247,33 @@ impl StridedInterval {
             }
         }
     }
+    /// Sound, not exact in general -- mirrors the Verus join(): exact for
+    /// same-stride/same-residue and for two distinct singletons, top()
+    /// otherwise (no gcd helper yet to do better).
+    fn join(&self, t: &StridedInterval) -> StridedInterval {
+        let (s1, l1, h1) = match self {
+            StridedInterval::Bottom => return *t,
+            StridedInterval::Value { stride, lo, hi } => (*stride, *lo, *hi),
+        };
+        let (s2, l2, h2) = match t {
+            StridedInterval::Bottom => return *self,
+            StridedInterval::Value { stride, lo, hi } => (*stride, *lo, *hi),
+        };
+        let abs_diff = if l1 >= l2 { l1 - l2 } else { l2 - l1 };
+        if s1 == s2 && s1 != 0 && abs_diff % s1 == 0 {
+            let lo = l1.min(l2);
+            let hi = h1.max(h2);
+            StridedInterval::Value { stride: s1, lo, hi }
+        } else if s1 == 0 && s2 == 0 && l1 == l2 {
+            *self
+        } else if s1 == 0 && s2 == 0 {
+            let lo = l1.min(l2);
+            let hi = l1.max(l2);
+            StridedInterval::Value { stride: hi - lo, lo, hi }
+        } else {
+            StridedInterval::top()
+        }
+    }
 }
 
 // ================================================================
@@ -1258,6 +1285,82 @@ fn strided_normalize_aligned_example() {
     for x in [3u64, 4, 6, 7, 9, 10] {
         assert!(!si.contains(x) && !n.contains(x), "unexpected member {:#x}", x);
     }
+}
+
+#[test]
+fn fuzz_strided_join_contains_both() {
+    let mut rng = test_rng();
+    for _ in 0..N {
+        let a = rand_strided(&mut rng);
+        let b = rand_strided(&mut rng);
+        let j = a.join(&b);
+        for _ in 0..S {
+            if let Some(x) = sample_strided(&a, &mut rng) {
+                assert!(j.contains(x), "join dropped a's value: a={:?} b={:?} j={:?} x={:#x}", a, b, j, x);
+            }
+            if let Some(x) = sample_strided(&b, &mut rng) {
+                assert!(j.contains(x), "join dropped b's value: a={:?} b={:?} j={:?} x={:#x}", a, b, j, x);
+            }
+        }
+    }
+}
+
+#[test]
+fn fuzz_strided_join_wf() {
+    let mut rng = test_rng();
+    for _ in 0..N {
+        let a = rand_strided(&mut rng);
+        let b = rand_strided(&mut rng);
+        let j = a.join(&b);
+        assert!(j.wf(), "join produced non-wf: a={:?} b={:?} j={:?}", a, b, j);
+    }
+}
+
+#[test]
+fn strided_join_bottom_is_identity() {
+    let mut rng = test_rng();
+    for _ in 0..N {
+        let a = rand_strided(&mut rng);
+        assert_eq!(StridedInterval::bottom().join(&a), a);
+        assert_eq!(a.join(&StridedInterval::bottom()), a);
+    }
+}
+
+/// same stride, compatible residue: join is exact, just widens the bounds --
+/// no gcd needed for this case.
+#[test]
+fn strided_join_same_residue_is_exact() {
+    let a = StridedInterval::Value { stride: 3, lo: 2, hi: 8 }; // {2,5,8}
+    let b = StridedInterval::Value { stride: 3, lo: 11, hi: 14 }; // {11,14}, 11 == 2 (mod 3)
+    let j = a.join(&b);
+    assert_eq!(j, StridedInterval::Value { stride: 3, lo: 2, hi: 14 });
+    for x in [2u64, 5, 8, 11, 14] {
+        assert!(j.contains(x), "join missing expected member {:#x}", x);
+    }
+    for x in [3u64, 9, 10, 12] {
+        assert!(!j.contains(x), "join has unexpected member {:#x}", x);
+    }
+}
+
+/// two distinct singletons: the two-point set is exactly representable as
+/// a stride equal to the gap between them, not just an over-approximation.
+#[test]
+fn strided_join_two_singletons_is_exact() {
+    let j = StridedInterval::singleton(4).join(&StridedInterval::singleton(10));
+    assert_eq!(j, StridedInterval::Value { stride: 6, lo: 4, hi: 10 });
+    assert!(j.contains(4) && j.contains(10));
+    for x in [0u64, 1, 2, 3, 5, 6, 7, 8, 9, 11] {
+        assert!(!j.contains(x), "two-singleton join has unexpected member {:#x}", x);
+    }
+}
+
+/// incompatible strides: no gcd helper yet, so join must fall back to a
+/// sound but imprecise top() rather than guessing.
+#[test]
+fn strided_join_incompatible_strides_falls_back_to_top() {
+    let a = StridedInterval::Value { stride: 3, lo: 0, hi: 9 };
+    let b = StridedInterval::Value { stride: 5, lo: 0, hi: 20 };
+    assert_eq!(a.join(&b), StridedInterval::top());
 }
 
 fn main() {
