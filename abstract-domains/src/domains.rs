@@ -1707,7 +1707,8 @@ macro_rules! abstract_domain {
 
                             assert(qi == ai / bi);
                             assert(ri == ai % bi);
-                            assert(ai == qi * bi + ri);
+                            assert(ai == qi * bi + ri) by (nonlinear_arith)
+                                requires ai == bi * qi + ri;
 
                             // Bounds from extended_gcd(b, r):
                             // |x1| <= r and |y1| <= b.
@@ -2273,7 +2274,486 @@ macro_rules! abstract_domain {
 
                     Some(lcm)
                 }
-            }            
+            }
+
+            /// A canonical residue with the input moduli's LCM.
+            pub open spec fn is_crt_merge_shape(
+                modulus: nat,
+                residue: nat,
+                m1: nat,
+                m2: nat,
+            ) -> bool {
+                modulus > 0
+                    && residue < modulus
+                    && exists|g: nat|
+                        is_gcd(g, m1, m2)
+                        && modulus == (m1 / g) * m2
+            }
+
+            /// A positive exact divisor has a positive quotient.
+            pub proof fn positive_exact_quotient(a: nat, d: nat)
+                requires a > 0, d > 0, a % d == 0,
+                ensures a / d > 0,
+            {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a as int, d as int);
+                assert(a / d > 0) by (nonlinear_arith)
+                    requires a > 0, d > 0, a == d * (a / d);
+            }
+
+            /// Adding a multiple of a modulus preserves its remainder.
+            pub proof fn congruence_shift(x: int, y: int, m: int, q: int)
+                requires m > 0, x == y + m * q,
+                ensures x % m == y % m,
+            {
+                vstd::arithmetic::div_mod::lemma_mod_multiples_vanish(q, y, m);
+            }
+
+            /// Convert Rust's signed remainder to a canonical mathematical residue.
+            pub proof fn signed_remainder_normalized(s: int, n: int, rem: int)
+                requires n > 0, rem == vstd::arithmetic::div_mod::rust_rem(s, n),
+                ensures (if rem < 0 { rem + n } else { rem }) == s % n,
+            {
+                if s < 0 {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(-s, n);
+                    let q = -((-s) / n);
+                    assert(s == n * q + rem) by (nonlinear_arith)
+                        requires -s == n * ((-s) / n) + (-s) % n,
+                            q == -((-s) / n), rem == -((-s) % n);
+                    let r = if rem < 0 { rem + n } else { rem };
+                    let quotient = if rem < 0 { q - 1 } else { q };
+                    assert(s == n * quotient + r) by (nonlinear_arith)
+                        requires s == n * q + rem,
+                            r == if rem < 0 { rem + n } else { rem },
+                            quotient == if rem < 0 { q - 1 } else { q };
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(s, n, quotient, r);
+                }
+            }
+
+            /// The reduced CRT multiplier constructs a common solution.
+            pub proof fn crt_candidate_solution(
+                m1: int, a1: int, m2: int, a2: int,
+                g: int, s: int, t: int, k: int,
+            )
+                requires
+                    m1 > 0, m2 > 0, g > 0,
+                    m1 % g == 0, m2 % g == 0,
+                    s * m1 + t * m2 == g,
+                    a1 % g == a2 % g,
+                    k % (m2 / g) == ((a2 / g - a1 / g) * s) % (m2 / g),
+                ensures
+                    (a1 + m1 * k) % m1 == a1 % m1,
+                    (a1 + m1 * k) % m2 == a2 % m2,
+            {
+                use vstd::arithmetic::div_mod::lemma_fundamental_div_mod;
+                let n = m2 / g;
+                let delta = a2 / g - a1 / g;
+                lemma_fundamental_div_mod(m2, g);
+                positive_exact_quotient(m2 as nat, g as nat);
+                lemma_fundamental_div_mod(a1, g);
+                lemma_fundamental_div_mod(a2, g);
+                assert(a2 - a1 == g * delta) by (nonlinear_arith)
+                    requires a1 == g * (a1 / g) + a1 % g,
+                        a2 == g * (a2 / g) + a2 % g, a1 % g == a2 % g,
+                        delta == a2 / g - a1 / g;
+                lemma_fundamental_div_mod(k, n);
+                lemma_fundamental_div_mod(delta * s, n);
+                let h = k / n - (delta * s) / n;
+                assert(k == delta * s + n * h) by (nonlinear_arith)
+                    requires k == n * (k / n) + k % n,
+                        delta * s == n * ((delta * s) / n) + (delta * s) % n,
+                        k % n == (delta * s) % n,
+                        h == k / n - (delta * s) / n;
+                lemma_fundamental_div_mod(m1, g);
+                let p = m1 / g;
+                assert(m1 * n == m2 * p) by (nonlinear_arith)
+                    requires m1 == g * p, m2 == g * n;
+                assert(m1 * (delta * s + n * h)
+                    == (s * m1) * delta + (m1 * n) * h) by (nonlinear_arith);
+                assert((g - t * m2) * delta + (m2 * p) * h
+                    == g * delta + m2 * (p * h - t * delta)) by (nonlinear_arith);
+                assert(a1 + m1 * k == a2 + m2 * (p * h - t * delta));
+                congruence_shift(a1 + m1 * k, a1, m1, k);
+                congruence_shift(a1 + m1 * k, a2, m2, p * h - t * delta);
+            }
+
+            /// Reduction by a common multiple preserves each input constraint.
+            pub proof fn crt_normalize_solution(x: int, m1: nat, m2: nat, d: nat)
+                requires m1 > 0, m2 > 0, is_gcd(d, m1, m2),
+                ensures
+                    (x % (((m1 / d) * m2) as int)) % (m1 as int) == x % (m1 as int),
+                    (x % (((m1 / d) * m2) as int)) % (m2 as int) == x % (m2 as int),
+            {
+                use vstd::arithmetic::div_mod::lemma_fundamental_div_mod;
+                let a = m1 as int;
+                let b = m2 as int;
+                let g = d as int;
+                let p = a / g;
+                let n = b / g;
+                lemma_fundamental_div_mod(a, g);
+                lemma_fundamental_div_mod(b, g);
+                positive_exact_quotient(m1, d);
+                let l = p * b;
+                assert(l > 0) by (nonlinear_arith) requires p > 0, b > 0, l == p * b;
+                assert(l == a * n) by (nonlinear_arith)
+                    requires a == g * p, b == g * n, l == p * b;
+                lemma_fundamental_div_mod(x, l);
+                let q = x / l;
+                let r = x % l;
+                assert(x == r + a * (n * q)) by (nonlinear_arith)
+                    requires x == l * q + r, l == a * n;
+                assert(x == r + b * (p * q)) by (nonlinear_arith)
+                    requires x == l * q + r, l == p * b;
+                congruence_shift(x, r, a, n * q);
+                congruence_shift(x, r, b, p * q);
+            }
+
+            /// The GCD is unique, including gcd(0, 0).
+            pub proof fn gcd_unique(g: nat, d: nat, a: nat, b: nat)
+                requires is_gcd(g, a, b), is_gcd(d, a, b),
+                ensures g == d,
+            {
+                if a != 0 || b != 0 {
+                    assert(is_common_divisor(g, a, b));
+                    assert(is_common_divisor(d, a, b));
+                    assert(g <= d);
+                    assert(d <= g);
+                }
+            }
+
+            /// Regroup four factors using associativity and commutativity.
+            pub proof fn mul_regroup(a: int, b: int, c: int, d: int)
+                ensures (a * b) * (c * d) == (b * c) * (a * d),
+            {
+                use vstd::arithmetic::mul::{lemma_mul_is_associative, lemma_mul_is_commutative};
+                lemma_mul_is_associative(a * b, c, d);
+                lemma_mul_is_associative(a, b, c);
+                lemma_mul_is_commutative(a, b * c);
+                lemma_mul_is_associative(b * c, a, d);
+            }
+
+            /// Bezout's identity makes every common multiple a multiple of the LCM.
+            pub proof fn common_multiple_is_lcm_multiple(
+                z: int, a: int, b: int, g: int, s: int, t: int,
+            )
+                requires a > 0, b > 0, g > 0,
+                    a % g == 0, b % g == 0,
+                    s * a + t * b == g,
+                    z % a == 0, z % b == 0,
+                ensures z % ((a / g) * b) == 0,
+            {
+                use vstd::arithmetic::div_mod::lemma_fundamental_div_mod;
+                lemma_fundamental_div_mod(a, g);
+                lemma_fundamental_div_mod(z, a);
+                lemma_fundamental_div_mod(z, b);
+                positive_exact_quotient(a as nat, g as nat);
+                let p = a / g;
+                let l = p * b;
+                let u = z / a;
+                let v = z / b;
+                let w = s * v + t * u;
+                assert(l > 0) by (nonlinear_arith) requires p > 0, b > 0, l == p * b;
+                assert(g * l == a * b) by (nonlinear_arith)
+                    requires a == g * p, l == p * b;
+                assert((s * a + t * b) * z == s * a * z + t * b * z)
+                    by (nonlinear_arith);
+                mul_regroup(s, a, b, v);
+                mul_regroup(t, b, a, u);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(a, b);
+                vstd::arithmetic::mul::lemma_mul_is_distributive_add(a * b, s * v, t * u);
+                assert(s * a * (b * v) + t * b * (a * u)
+                    == (a * b) * (s * v + t * u));
+                assert(g * z == (g * l) * w);
+                assert(z == l * w) by (nonlinear_arith)
+                    requires g > 0, g * z == (g * l) * w;
+                congruence_shift(z, 0, l, w);
+            }
+
+            /// A canonical common solution generates exactly the intersection.
+            pub proof fn crt_solution_class_exact(
+                x: int, residue: nat, m1: nat, r1: nat, m2: nat, r2: nat,
+                g: nat, s: int, t: int,
+            )
+                requires m1 > 0, m2 > 0,
+                    is_extended_gcd(g, s, t, m1, m2),
+                    residue < (m1 / g) * m2,
+                    is_common_congruence_solution(residue as int, m1, r1, m2, r2),
+                ensures
+                    (x % (((m1 / g) * m2) as int) == residue as int)
+                        <==> is_common_congruence_solution(x, m1, r1, m2, r2),
+            {
+                let l = ((m1 / g) * m2) as int;
+                let r = residue as int;
+                crt_normalize_solution(x, m1, m2, g);
+                if is_common_congruence_solution(x, m1, r1, m2, r2) {
+                    vstd::arithmetic::div_mod::lemma_mod_equivalence(x, r, m1 as int);
+                    vstd::arithmetic::div_mod::lemma_mod_equivalence(x, r, m2 as int);
+                    common_multiple_is_lcm_multiple(x - r, m1 as int, m2 as int,
+                        g as int, s, t);
+                    vstd::arithmetic::div_mod::lemma_mod_equivalence(x, r, l);
+                    vstd::arithmetic::div_mod::lemma_small_mod(residue, l as nat);
+                }
+            }
+            
+            /// Return the exact canonical CRT class, or None for incompatibility or LCM overflow.
+            pub fn crt_merge(
+                m1: $uint,
+                r1: $uint,
+                m2: $uint,
+                r2: $uint,
+            ) -> (result: Option<($uint, $uint)>)
+                requires
+                    m1 > 0,
+                    m2 > 0,
+                ensures
+                    match result {
+                        Some((modulus, residue)) =>
+                            is_crt_merge_shape(
+                                modulus as nat,
+                                residue as nat,
+                                m1 as nat,
+                                m2 as nat,
+                            ) && is_common_congruence_solution(
+                                residue as int, m1 as nat, r1 as nat,
+                                m2 as nat, r2 as nat,
+                            ) && (forall|x: int|
+                                #[trigger] is_common_congruence_solution(
+                                    x, m1 as nat, r1 as nat, m2 as nat, r2 as nat,
+                                ) <==> x % (modulus as int) == residue as int),
+
+                        None => true,
+                    },
+            {
+                let a1 = r1 % m1;
+                let a2 = r2 % m2;
+
+                let (g, s, _t) = extended_gcd(m1, m2);
+
+                proof {
+                    assert(is_extended_gcd(
+                        g as nat,
+                        s as int,
+                        _t as int,
+                        m1 as nat,
+                        m2 as nat,
+                    ));
+
+                    assert(is_gcd(
+                        g as nat,
+                        m1 as nat,
+                        m2 as nat,
+                    ));
+
+                    assert(!(m1 == 0 && m2 == 0));
+
+                    assert(is_common_divisor(
+                        g as nat,
+                        m1 as nat,
+                        m2 as nat,
+                    ));
+
+                    assert(g > 0);
+                    assert((m1 as nat) % (g as nat) == 0);
+                    assert((m2 as nat) % (g as nat) == 0);
+                }
+
+                if a1 % g != a2 % g {
+                    return None;
+                }
+
+                let lcm = match checked_lcm(m1, m2) {
+                    Some(v) => v,
+                    None => {
+                        return None;
+                    },
+                };
+
+                proof {
+                    let d = choose|d: nat| is_gcd(d, m1 as nat, m2 as nat)
+                        && lcm as nat == ((m1 as nat) / d) * (m2 as nat);
+                    positive_exact_quotient(m1 as nat, d);
+                    assert(lcm > 0) by (nonlinear_arith)
+                        requires (m1 as nat) / d > 0, m2 > 0,
+                            lcm as nat == ((m1 as nat) / d) * (m2 as nat);
+                }
+
+                // Bézout gives the inverse s of m1/g modulo n = m2/g.
+
+                let n = m2 / g;
+
+                proof {
+                    positive_exact_quotient(m2 as nat, g as nat);
+                    assert(n > 0);
+                }
+
+                // Compatibility gives (a2 - a1)/g = q2 - q1.
+                let q1 = a1 / g;
+                let q2 = a2 / g;
+                proof {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a2 as int, g as int);
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m2 as int, g as int);
+                    assert(q2 < n) by (nonlinear_arith)
+                        requires a2 < m2, g > 0,
+                            a2 as int == (g as int) * (q2 as int) + (a2 as int) % (g as int),
+                            m2 as int == (g as int) * (n as int),
+                            (a2 as int) % (g as int) >= 0;
+                }
+
+                // Compute (q2 - q1) mod n without the potentially overflowing q2 + n.
+                let q1_mod_n = q1 % n;
+
+                let delta_mod =
+                    if q2 >= q1_mod_n {
+                        q2 - q1_mod_n
+                    } else {
+                        n - (q1_mod_n - q2)
+                    };
+
+                proof {
+                    assert(delta_mod < n);
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(q1 as int, n as int);
+                    let shift = if q2 >= q1_mod_n { q1 as int / n as int }
+                        else { q1 as int / n as int + 1 };
+                    assert(delta_mod as int == (q2 as int - q1 as int) + (n as int) * shift)
+                        by (nonlinear_arith)
+                        requires q1 as int == (n as int) * (q1 as int / n as int) + q1_mod_n as int,
+                            delta_mod as int == if q2 >= q1_mod_n { q2 as int - q1_mod_n as int }
+                                else { n as int - (q1_mod_n as int - q2 as int) },
+                            shift == if q2 >= q1_mod_n { q1 as int / n as int }
+                                else { q1 as int / n as int + 1 };
+                    congruence_shift(delta_mod as int, q2 as int - q1 as int, n as int, shift);
+                }
+
+                // Normalize s before multiplication to avoid large signed intermediates.
+
+                let ni = n as i128;
+
+                proof {
+                    assert(ni > 0);
+                }
+
+                let s_rem = s % ni;
+
+                let s_mod_i =
+                    if s_rem < 0 {
+                        s_rem + ni
+                    } else {
+                        s_rem
+                    };
+
+                proof {
+                    assert(0 <= s_mod_i);
+                    assert(s_mod_i < ni);
+                }
+
+                let s_mod = s_mod_i as $uint;
+
+                proof {
+                    assert((s_mod as nat) < (n as nat));
+                    signed_remainder_normalized(s as int, n as int, s_rem as int);
+                    assert(s_mod as int == (s as int) % (n as int));
+                }
+
+                // Compute k = delta*s mod n in u128; each factor fits in u64.
+
+                let delta_wide = delta_mod as u128;
+                let s_wide = s_mod as u128;
+                let n_wide = n as u128;
+
+                proof {
+                    assert(delta_wide * s_wide <= u128::MAX) by (nonlinear_arith)
+                        requires delta_wide <= u64::MAX, s_wide <= u64::MAX;
+                }
+                let product = delta_wide * s_wide;
+                let k_wide = product % n_wide;
+
+                proof {
+                    assert(k_wide < n_wide);
+                }
+
+                let k = k_wide as $uint;
+
+                proof {
+                    assert(k < n);
+                    vstd::arithmetic::div_mod::lemma_small_mod(s_mod as nat, n as nat);
+                    vstd::arithmetic::div_mod::lemma_small_mod(k as nat, n as nat);
+                    vstd::arithmetic::div_mod::lemma_mul_mod_noop_general(
+                        delta_mod as int, s_mod as int, n as int);
+                    vstd::arithmetic::div_mod::lemma_mul_mod_noop_general(
+                        q2 as int - q1 as int, s as int, n as int);
+                    assert((delta_mod as int) % (n as int) == (q2 as int - q1 as int) % (n as int));
+                    assert((s_mod as int) % (n as int) == (s as int) % (n as int));
+                    assert(k as int == ((delta_mod as int) * (s_mod as int)) % (n as int));
+                    assert((k as int) % (n as int) == ((q2 as int - q1 as int) * (s as int)) % (n as int));
+                    crt_candidate_solution(m1 as int, a1 as int, m2 as int, a2 as int,
+                        g as int, s as int, _t as int, k as int);
+                }
+
+                // Construct a1 + m1*k in u128 before reducing modulo the LCM.
+
+                let a1_wide = a1 as u128;
+                let m1_wide = m1 as u128;
+                let lcm_wide = lcm as u128;
+                let k_wide_2 = k as u128;
+
+                proof {
+                    assert(m1_wide * k_wide_2 + a1_wide <= u128::MAX) by (nonlinear_arith)
+                        requires m1_wide <= u64::MAX, k_wide_2 <= u64::MAX,
+                            a1_wide <= u64::MAX;
+                }
+                let term = m1_wide * k_wide_2;
+                let candidate = a1_wide + term;
+
+                let residue_wide = candidate % lcm_wide;
+
+                proof {
+                    assert(residue_wide < lcm_wide);
+                }
+
+                let residue = residue_wide as $uint;
+
+                proof {
+                    assert(residue < lcm);
+
+                    assert(
+                        exists|d: nat|
+                            is_gcd(
+                                d,
+                                m1 as nat,
+                                m2 as nat,
+                            )
+                            && lcm as nat
+                                == ((m1 as nat) / d)
+                                    * (m2 as nat)
+                    );
+
+                    let d = choose|d: nat| is_gcd(d, m1 as nat, m2 as nat)
+                        && lcm as nat == ((m1 as nat) / d) * (m2 as nat);
+                    crt_normalize_solution(candidate as int, m1 as nat, m2 as nat, d);
+                    vstd::arithmetic::div_mod::lemma_small_mod(a1 as nat, m1 as nat);
+                    vstd::arithmetic::div_mod::lemma_small_mod(a2 as nat, m2 as nat);
+                    assert(is_common_congruence_solution(
+                        residue as int, m1 as nat, r1 as nat, m2 as nat, r2 as nat));
+
+                    gcd_unique(g as nat, d, m1 as nat, m2 as nat);
+                    assert forall|x: int|
+                        #[trigger] is_common_congruence_solution(
+                            x, m1 as nat, r1 as nat, m2 as nat, r2 as nat,
+                        ) <==> x % (lcm as int) == residue as int by {
+                        crt_solution_class_exact(x, residue as nat,
+                            m1 as nat, r1 as nat, m2 as nat, r2 as nat,
+                            g as nat, s as int, _t as int);
+                    }
+
+                    assert(is_crt_merge_shape(
+                        lcm as nat,
+                        residue as nat,
+                        m1 as nat,
+                        m2 as nat,
+                    ));
+                }
+
+                Some((lcm, residue))
+            }
 
             // ============================================================
             // Congruence
