@@ -1289,6 +1289,10 @@ macro_rules! abstract_domain {
             // Helpers for Congruence and Strided
             // ============================================================
 
+            /// -----------------------------------------------------------
+            /// GCD: Greatest Common Divisor
+            /// -----------------------------------------------------------
+            
             /// Returns true if d is a positive common divisor of a and b.
             /// A common divisor divides both a and b without a remainder.
             pub open spec fn is_common_divisor(d: nat, a: nat, b: nat) -> bool {
@@ -1843,6 +1847,283 @@ macro_rules! abstract_domain {
                         (g, x, y)
                     }
                 }
+            }
+            
+            
+            /// -----------------------------------------------------------
+            /// CRT: Chinese Remainder Theorem
+            /// -----------------------------------------------------------
+            
+            /// Returns true if x satisfies both congruences.
+            pub open spec fn is_common_congruence_solution(
+                x: int,
+                m1: nat,
+                r1: nat,
+                m2: nat,
+                r2: nat,
+            ) -> bool {
+                x % (m1 as int) == (r1 as int) % (m1 as int)
+                    && x % (m2 as int) == (r2 as int) % (m2 as int)
+            }
+
+            /// Returns true if the residues are compatible modulo the GCD.
+            pub open spec fn are_congruences_compatible(
+                g: nat,
+                r1: nat,
+                r2: nat,
+            ) -> bool {
+                r1 % g == r2 % g
+            }
+
+            /// Returns true if two congruences have a common solution.
+            pub fn crt_compatible(
+                m1: $uint,
+                r1: $uint,
+                m2: $uint,
+                r2: $uint,
+            ) -> (result: bool)
+                requires
+                    m1 > 0,
+                    m2 > 0,
+                ensures
+                    exists|g: nat|
+                        is_gcd(g, m1 as nat, m2 as nat)
+                        && result == are_congruences_compatible(
+                            g,
+                            r1 as nat,
+                            r2 as nat,
+                        ),
+            {
+                let g = gcd(m1, m2);
+
+                proof {
+                    assert(is_gcd(
+                        g as nat,
+                        m1 as nat,
+                        m2 as nat,
+                    ));
+                }
+
+                (r1 % g) == (r2 % g)
+            }
+
+            /// Proves that a common solution implies compatibility of the congruences.
+            pub proof fn crt_solution_implies_compatible(
+                g: nat,
+                m1: nat,
+                r1: nat,
+                m2: nat,
+                r2: nat,
+                x: int,
+            )
+                requires
+                    m1 > 0,
+                    m2 > 0,
+                    is_gcd(g, m1, m2),
+                    is_common_congruence_solution(
+                        x,
+                        m1,
+                        r1,
+                        m2,
+                        r2,
+                    ),
+                ensures
+                    are_congruences_compatible(
+                        g,
+                        r1,
+                        r2,
+                    ),
+            {
+                // 1. Since g = gcd(m1, m2), g divides both moduli.
+                assert(!(m1 == 0 && m2 == 0));
+                assert(is_common_divisor(g, m1, m2));
+
+                assert(g > 0);
+                assert(m1 % g == 0);
+                assert(m2 % g == 0);
+
+                let gi = g as int;
+                let m1i = m1 as int;
+                let m2i = m2 as int;
+                let r1i = r1 as int;
+                let r2i = r2 as int;
+
+                assert(gi > 0);
+
+
+                // 2. From x ≡ r1 (mod m1), express x - r1 as a multiple of m1.
+                assert(x % m1i == r1i % m1i);
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    x,
+                    m1i,
+                );
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    r1i,
+                    m1i,
+                );
+
+                let xq1 = x / m1i;
+                let r1q = r1i / m1i;
+                let rem1 = x % m1i;
+
+                assert(r1i % m1i == rem1);
+
+                assert(
+                    x == xq1 * m1i + rem1
+                );
+
+                assert(
+                    r1i == r1q * m1i + rem1
+                );
+
+                let k1 = xq1 - r1q;
+
+                assert(
+                    x - r1i == k1 * m1i
+                ) by (nonlinear_arith)
+                    requires
+                        x == xq1 * m1i + rem1,
+                        r1i == r1q * m1i + rem1,
+                        k1 == xq1 - r1q,
+                {
+                }
+
+
+                // 3. From x ≡ r2 (mod m2), express x - r2 as a multiple of m2.
+                assert(x % m2i == r2i % m2i);
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    x,
+                    m2i,
+                );
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    r2i,
+                    m2i,
+                );
+
+                let xq2 = x / m2i;
+                let r2q = r2i / m2i;
+                let rem2 = x % m2i;
+
+                assert(r2i % m2i == rem2);
+
+                assert(
+                    x == xq2 * m2i + rem2
+                );
+
+                assert(
+                    r2i == r2q * m2i + rem2
+                );
+
+                let k2 = xq2 - r2q;
+
+                assert(
+                    x - r2i == k2 * m2i
+                ) by (nonlinear_arith)
+                    requires
+                        x == xq2 * m2i + rem2,
+                        r2i == r2q * m2i + rem2,
+                        k2 == xq2 - r2q,
+                {
+                }
+
+
+                // 4. Since g divides m1 and m2, write
+                //     m1 = d1*g
+                //     m2 = d2*g.
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    m1i,
+                    gi,
+                );
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    m2i,
+                    gi,
+                );
+
+                assert(m1i % gi == 0);
+                assert(m2i % gi == 0);
+
+                let d1 = m1i / gi;
+                let d2 = m2i / gi;
+
+                assert(
+                    m1i == d1 * gi
+                );
+
+                assert(
+                    m2i == d2 * gi
+                );
+
+
+                // 5. Subtract the two equations:
+                // x - r1 = k1*m1
+                // x - r2 = k2*m2
+                // therefore: r2 - r1 = k1*m1 - k2*m2,
+                // which is a multiple of g.
+                let k = k1 * d1 - k2 * d2;
+
+                assert(
+                    r2i - r1i == k * gi
+                ) by (nonlinear_arith)
+                    requires
+                        x - r1i == k1 * m1i,
+                        x - r2i == k2 * m2i,
+                        m1i == d1 * gi,
+                        m2i == d2 * gi,
+                        k == k1 * d1 - k2 * d2,
+                {
+                }
+
+
+                // 6. If r2 - r1 is a multiple of g, then r1 and r2 have the same remainder modulo g
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+                    r1i,
+                    gi,
+                );
+
+                let q = r1i / gi;
+                let rem = r1i % gi;
+
+                assert(
+                    r1i == q * gi + rem
+                );
+
+                assert(0 <= rem);
+                assert(rem < gi);
+
+                assert(
+                    r2i == (q + k) * gi + rem
+                ) by (nonlinear_arith)
+                    requires
+                        r2i - r1i == k * gi,
+                        r1i == q * gi + rem,
+                {
+                }
+
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                    r2i,
+                    gi,
+                    q + k,
+                    rem,
+                );
+
+                assert(r2i % gi == rem);
+                assert(r1i % gi == rem);
+
+                assert(r1i % gi == r2i % gi);
+
+                // Bridge int modulo back to nat modulo.
+                assert(r1 % g == r2 % g);
+
+                assert(are_congruences_compatible(
+                    g,
+                    r1,
+                    r2,
+                ));
             }
 
             // ============================================================
