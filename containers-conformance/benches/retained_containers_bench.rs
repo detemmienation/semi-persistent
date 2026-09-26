@@ -725,6 +725,225 @@ fn bench_sparse_set_churn(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Opaque-input variants (design chapter 20, validation protocol). The plan is
+// generated once from a seed, laundered through `black_box` at the group
+// boundary so LLVM cannot specialise on the literal sizes, and shared by both
+// arms. One `black_box` on the final checksum keeps the work alive; nothing
+// inside the loops is pinned.
+// ---------------------------------------------------------------------------
+
+/// One append plan: `lists` lists of `per_list` appends each, the fixed row's
+/// loop nest with the trip counts and payloads opaque. (A flat op sequence or
+/// a random list order is a different program: no loop to peel, or a
+/// memory-bound loop whose time moves 30 per cent with placement alone.)
+struct ListPlan {
+    lists: usize,
+    per_list: usize,
+    payloads: Vec<u32>,
+}
+
+fn list_plan(seed: u64, lists: usize, per_list: usize) -> ListPlan {
+    let mut rng = containers_conformance::Rng::new(seed);
+    let payloads = (0..lists * per_list)
+        .map(|_| (rng.next() as u32) & 0x7FFF_FFFF)
+        .collect();
+    black_box(ListPlan {
+        lists,
+        per_list,
+        payloads,
+    })
+}
+
+fn bench_list_append_iter_opaque(c: &mut Criterion) {
+    let mut g = c.benchmark_group("list/append_iter_opaque");
+    let plan = list_plan(0x5EED_A11D, LISTS, PER_LIST);
+
+    g.bench_function("legacy", |b| {
+        b.iter(|| {
+            let mut a: prod::ListArena<PElem, PList, PNode, false> = prod::ListArena::new();
+            let mut lists = Vec::with_capacity(plan.lists);
+            for _ in 0..plan.lists {
+                lists.push(a.new_list());
+            }
+            for (k, &l) in lists.iter().enumerate() {
+                for j in 0..plan.per_list {
+                    a.append(l, PElem::new(plan.payloads[k * plan.per_list + j]));
+                }
+            }
+            let mut acc = 0u64;
+            for &l in &lists {
+                for e in a.iter(l) {
+                    acc = acc.wrapping_add(e.raw() as u64);
+                }
+            }
+            black_box(acc)
+        })
+    });
+
+    g.bench_function("verified", |b| {
+        b.iter(|| {
+            let mut a: verus::ListArena<VElem, VList, VNode, false> = verus::ListArena::new();
+            let mut lists = Vec::with_capacity(plan.lists);
+            for _ in 0..plan.lists {
+                lists.push(a.try_new_list().expect("within id space"));
+            }
+            for (k, &l) in lists.iter().enumerate() {
+                for j in 0..plan.per_list {
+                    a.try_append(l, VElem::new(plan.payloads[k * plan.per_list + j]))
+                        .expect("within id space");
+                }
+            }
+            let mut acc = 0u64;
+            for &l in &lists {
+                for e in a.iter(l) {
+                    acc = acc.wrapping_add(e.raw() as u64);
+                }
+            }
+            black_box(acc)
+        })
+    });
+
+    g.finish();
+}
+
+/// One splice plan: `lists` lists of `per_list` appends, then a merge order.
+struct SplicePlan {
+    lists: usize,
+    per_list: usize,
+    payloads: Vec<u32>,
+    order: Vec<u32>,
+}
+
+fn splice_plan(seed: u64, lists: usize, per_list: usize) -> SplicePlan {
+    let mut rng = containers_conformance::Rng::new(seed);
+    let payloads = (0..lists * per_list)
+        .map(|_| (rng.next() as u32) & 0x7FFF_FFFF)
+        .collect();
+    // The fixed row's source order; only the counts and payloads are opaque.
+    let order: Vec<u32> = (1..lists as u32).collect();
+    black_box(SplicePlan {
+        lists,
+        per_list,
+        payloads,
+        order,
+    })
+}
+
+fn bench_list_splice_opaque(c: &mut Criterion) {
+    let mut g = c.benchmark_group("list/splice_opaque");
+    let plan = splice_plan(0x5EED_5B1C, LISTS, 4);
+
+    g.bench_function("legacy", |b| {
+        b.iter(|| {
+            let mut a: prod::ListArena<PElem, PList, PNode, false> = prod::ListArena::new();
+            let mut lists = Vec::with_capacity(plan.lists);
+            for k in 0..plan.lists {
+                let l = a.new_list();
+                for j in 0..plan.per_list {
+                    a.append(l, PElem::new(plan.payloads[k * plan.per_list + j]));
+                }
+                lists.push(l);
+            }
+            let dst = lists[0];
+            for &src in &plan.order {
+                a.splice(dst, lists[src as usize]);
+            }
+            black_box(a.len(dst))
+        })
+    });
+
+    g.bench_function("verified", |b| {
+        b.iter(|| {
+            let mut a: verus::ListArena<VElem, VList, VNode, false> = verus::ListArena::new();
+            let mut lists = Vec::with_capacity(plan.lists);
+            for k in 0..plan.lists {
+                let l = a.try_new_list().expect("within id space");
+                for j in 0..plan.per_list {
+                    a.try_append(l, VElem::new(plan.payloads[k * plan.per_list + j]))
+                        .expect("within id space");
+                }
+                lists.push(l);
+            }
+            let dst = lists[0];
+            for &src in &plan.order {
+                a.splice(dst, lists[src as usize]);
+            }
+            black_box(a.len(dst))
+        })
+    });
+
+    g.finish();
+}
+
+/// One churn plan: `n` initial adds, then `steps` of `(slot, value)`.
+struct ChurnPlan {
+    n: usize,
+    steps: Vec<(u32, u64)>,
+}
+
+fn churn_plan(seed: u64, n: usize) -> ChurnPlan {
+    let mut rng = containers_conformance::Rng::new(seed);
+    let steps = (0..n / 2)
+        .map(|_| (rng.below(n as u64) as u32, rng.next()))
+        .collect();
+    black_box(ChurnPlan { n, steps })
+}
+
+fn bench_sparse_set_churn_opaque(c: &mut Criterion) {
+    let mut g = c.benchmark_group("sparse_set/churn_opaque");
+    let plan = churn_plan(0x5EED_C4A1, 20_000);
+
+    g.bench_function("legacy", |b| {
+        b.iter(|| {
+            let mut s: prod::SparseSet<u64, PElem, prod::ParallelStore<u64, PElem>, true> =
+                prod::SparseSet::new();
+            let mut ids = Vec::with_capacity(plan.n);
+            for i in 0..plan.n {
+                ids.push(s.add(i as u64));
+            }
+            let tok = s.mark(prod::ShrinkPolicy::Never);
+            for &(k, x) in &plan.steps {
+                let id = ids[k as usize];
+                if s.contains(id) {
+                    s.remove(id);
+                } else {
+                    ids[k as usize] = s.add(x);
+                }
+            }
+            s.restore(tok);
+            black_box(s.len().raw())
+        })
+    });
+
+    g.bench_function("verified", |b| {
+        b.iter(|| {
+            let mut s: ForkHistory<
+                verus::SparseSet<u64, VElem, verus::ParallelStore<u64, VElem>, true>,
+            > = ForkHistory::new(verus::SparseSet::new());
+            let mut ids = Vec::with_capacity(plan.n);
+            for i in 0..plan.n {
+                ids.push(s.try_add(i as u64).expect("add: within id space"));
+            }
+            let tok = s
+                .mark(verus::ShrinkPolicy::Never)
+                .expect("mark: depth bounded by this harness");
+            for &(k, x) in &plan.steps {
+                let id = ids[k as usize];
+                if s.contains(id) {
+                    s.remove(id);
+                } else {
+                    ids[k as usize] = s.try_add(x).expect("add: within id space");
+                }
+            }
+            assert!(s.restore_and_pop(tok), "restore: own token");
+            black_box(s.len().raw())
+        })
+    });
+
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // aov/log: AppendOnlyVec as the append log it is (node store pattern) —
 // bulk push, slice scan, mark/restore.
 //
@@ -977,6 +1196,71 @@ fn bench_map_intern_string(c: &mut Criterion) {
     g.finish();
 }
 
+/// Interning with an expensive key: 256-byte strings, so a clone on a hit is
+/// a real allocation and copy (chapter 20 second pass, SpMap `intern_entry`).
+fn bench_map_intern_expensive_key(c: &mut Criterion) {
+    let mut g = c.benchmark_group("map/intern_expensive_key");
+    const N: usize = 5_000;
+
+    fn keys() -> Vec<String> {
+        (0..N)
+            .map(|i| {
+                let mut k = format!("op::namespace_{}::symbol_{:08}::", i % 37, i);
+                while k.len() < 256 {
+                    k.push_str("padding-to-make-the-key-expensive-");
+                }
+                k.truncate(256);
+                k
+            })
+            .collect()
+    }
+
+    g.bench_function("legacy", |b| {
+        let ks = keys();
+        b.iter(|| {
+            let mut m: prod::Map<String, u32, usize, true> = prod::Map::new();
+            for (i, k) in ks.iter().enumerate() {
+                if m.id_of(k).is_none() {
+                    m.insert(k.clone(), i as u32);
+                }
+            }
+            let mut hits = 0usize;
+            for _ in 0..4 {
+                for k in &ks {
+                    if m.id_of(k).is_some() {
+                        hits += 1;
+                    }
+                }
+            }
+            black_box(hits)
+        })
+    });
+
+    g.bench_function("verified", |b| {
+        let ks = keys();
+        b.iter(|| {
+            let mut m: verus::SpMap<String, u32, usize, true> = verus::SpMap::new();
+            for (i, k) in ks.iter().enumerate() {
+                if m.id_of(k).is_none() {
+                    m.try_insert(k.clone(), i as u32)
+                        .expect("insert: within index word");
+                }
+            }
+            let mut hits = 0usize;
+            for _ in 0..4 {
+                for k in &ks {
+                    if m.id_of(k).is_some() {
+                        hits += 1;
+                    }
+                }
+            }
+            black_box(hits)
+        })
+    });
+
+    g.finish();
+}
+
 fn bench_map_intern_composite(c: &mut Criterion) {
     let mut g = c.benchmark_group("map/intern_composite");
     const N: usize = 20_000;
@@ -1129,8 +1413,146 @@ fn bench_map_restore_small_suffix(c: &mut Criterion) {
     });
     g.finish();
 }
+// hinted_arena/probe: the fingerprint index in the shape the e-graph's
+// node-content cache takes. Coarse fingerprints (`a = i % 256`) give buckets
+// of sixteen candidates; every live content is probed (a hit at every bucket
+// depth) and one absent content per fingerprint (a full scan to a miss).
+// Counts and the fingerprint modulus pass through `black_box` once so the
+// bucket depth is not a compile-time constant.
+fn bench_hinted_arena_probe(c: &mut Criterion) {
+    use verus::Pair;
+    use verus::hinted_arena::HintedArena;
+    let mut g = c.benchmark_group("hinted_arena/probe");
+    // 2048 cells keep the whole working set (cells, keys, buckets, table)
+    // well inside L1 on every core class; at 4096 the inline store's 12-byte
+    // cells put it at the edge and the rows became placement-dominated.
+    let n = black_box(2048u32);
+    let fps = black_box(128u32);
+    fn arm<S: verus::diff_store::DiffStore<Pair<u32, u32>, u32, true>>(
+        g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+        label: &str,
+        mut arena: HintedArena<Pair<u32, u32>, u32, S, true>,
+        n: u32,
+        fps: u32,
+    ) {
+        let mut live = Vec::new();
+        for i in 0..n {
+            let p = Pair { a: i % fps, b: i };
+            arena.push(p).expect("capacity");
+            live.push(p);
+        }
+        let absent: Vec<Pair<u32, u32>> = (0..fps)
+            .map(|a| Pair {
+                a,
+                b: 0xDEAD_0000 + a,
+            })
+            .collect();
+        g.bench_function(label, |b| {
+            b.iter(|| {
+                let mut hits = 0usize;
+                for p in &live {
+                    if arena.probe(p).is_some() {
+                        hits += 1;
+                    }
+                }
+                for p in &absent {
+                    if arena.probe(p).is_some() {
+                        hits += 1;
+                    }
+                }
+                black_box(hits)
+            })
+        });
+        g.bench_function(format!("{label}_hits_only"), |b| {
+            b.iter(|| {
+                let mut hits = 0usize;
+                for p in &live {
+                    if arena.probe(p).is_some() {
+                        hits += 1;
+                    }
+                }
+                black_box(hits)
+            })
+        });
+        g.bench_function(format!("{label}_misses_only"), |b| {
+            b.iter(|| {
+                let mut hits = 0usize;
+                for _ in 0..16 {
+                    for p in &absent {
+                        if arena.probe(p).is_some() {
+                            hits += 1;
+                        }
+                    }
+                }
+                black_box(hits)
+            })
+        });
+    }
+    arm(
+        &mut g,
+        "inline",
+        HintedArena::<
+            Pair<u32, u32>,
+            u32,
+            verus::inline_store::InlineStore<Pair<u32, u32>, u32>,
+            true,
+        >::new(),
+        n,
+        fps,
+    );
+    arm(
+        &mut g,
+        "parallel",
+        HintedArena::<
+            Pair<u32, u32>,
+            u32,
+            verus::parallel_store::ParallelStore<Pair<u32, u32>, u32>,
+            true,
+        >::new(),
+        n,
+        fps,
+    );
+    g.finish();
+}
+
+// layered_span_map/flatten: the base-plus-delta span map regrouped into one
+// dense map, at three densities of the invalidated-key list (what the per-key
+// invalidation test scales with). Key count through `black_box` once.
+fn bench_layered_span_map_flatten(c: &mut Criterion) {
+    use verus::LayeredSpanMap;
+    use verus::dense_span_map::DenseSpanMap;
+    let mut g = c.benchmark_group("layered_span_map/flatten");
+    let num_keys = black_box(16_384usize);
+    let base_stream: Vec<(usize, u32)> = (0..num_keys)
+        .flat_map(|k| (0..4u32).map(move |j| (k, (k as u32) * 4 + j)))
+        .collect();
+    let delta_stream: Vec<(usize, u32)> = (0..num_keys)
+        .filter(|k| k % 4 == 0)
+        .map(|k| (k, 0xD000_0000 + k as u32))
+        .collect();
+    for (label, stride) in [
+        ("no_invalid", 0usize),
+        ("sparse_invalid", 64),
+        ("dense_invalid", 2),
+    ] {
+        let invalid: Vec<usize> = if stride == 0 {
+            Vec::new()
+        } else {
+            (0..num_keys).filter(|k| k % stride == 0).collect()
+        };
+        let base =
+            DenseSpanMap::<u32>::try_build(&base_stream, num_keys).expect("base keys in range");
+        let layered = LayeredSpanMap::<u32>::try_with_delta(base, &delta_stream, &invalid)
+            .expect("delta keys in range, invalid list ascending");
+        g.bench_function(label, |b| b.iter(|| black_box(layered.flatten().len())));
+    }
+    g.finish();
+}
+
 criterion_group!(
     benches,
+    bench_layered_span_map_flatten,
+    bench_hinted_arena_probe,
     bench_vec_try_extend,
     bench_vec_mark_set_restore,
     bench_vec_restore_replay,
@@ -1142,9 +1564,13 @@ criterion_group!(
     bench_class_ring_merge_restore,
     bench_map_intern,
     bench_map_intern_string,
+    bench_map_intern_expensive_key,
     bench_map_intern_composite,
     bench_map_restore_small_suffix,
     bench_sparse_set_churn,
+    bench_list_append_iter_opaque,
+    bench_list_splice_opaque,
+    bench_sparse_set_churn_opaque,
     bench_aov_log,
     bench_aov_phases,
 );

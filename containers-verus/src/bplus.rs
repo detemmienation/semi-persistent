@@ -2349,6 +2349,7 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
     /// A fresh cursor over this tree (production `tree.cursor()` parity;
     /// delegates to `BPlusCursor::new` — exhausted until `seek`/`seek_first`).
     pub fn cursor(&self) -> (c: BPlusCursor<'_, K, L, S, TRACK, P>)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires self.wf(),
         ensures c.tree_ref() == self, c.cursor_ok(), c.idx() == c.model().len(),
     {
@@ -8334,7 +8335,7 @@ pub struct BPlusCursor<'a, K, L, S, const TRACK: bool, P = HotFirst>
     /// Copy of the leaf the cursor stands on (meaningful while `node != NIL`),
     /// refreshed only when `node` changes, so `key`/`step` read the leaf without
     /// fetching it from the arena on every call.
-    pub(crate) leaf: L::Node,
+    pub(crate) leaf: Option<&'a <L::Node as Tagged>::Repr>,
     /// Ghost: the cursor's position in the IN-ORDER MODEL. `(node, pos)` is the
     /// executable realization of model index `gidx`; `gidx == model.len()` marks
     /// "exhausted" (`node == NIL`). The cursor's `wf` ties the two together, so
@@ -9482,6 +9483,130 @@ pub(crate) proof fn lemma_cursor_node_wf_at<K, L, S, const TRACK: bool, P>(
 /// the cursor set to `(node := lids[gm], pos, gleaf := gm, gidx := ti)`,
 /// `cursor_wf` holds and `idx == ti`. The positioned arm, with the node != NIL
 /// fact from the real-id bound.
+/// The cursor's cached leaf, as the fast path needs it: the arena leaf it
+/// stands on, well-formed, a leaf, and with strictly sorted keys (its keys are
+/// a window of the strictly sorted model).
+pub(crate) proof fn seek_fast_path_pre<K, L, S, const TRACK: bool, P>(c: &BPlusCursor<K, L, S, TRACK, P>)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+        P: TaggedFamily<L::Node, L::ArenaIdx, TRACK>,
+    requires
+        c.cursor_ok(),
+        c.node.as_nat() != nil_link::<L>(),
+    ensures
+        c.node.as_nat() < c.tree.arena().len(),
+        c.leaf is Some,
+        <L::Node as Tagged>::repr_wf(*c.leaf->Some_0),
+        c.leaf_val() == c.tree.arena()[c.node.as_nat() as int],
+        L::node_wf(c.leaf_val()),
+        L::is_leaf_spec(c.leaf_val()),
+        crate::bplus_tree::strictly_sorted(
+            Seq::new(L::keys_view(c.leaf_val()).len(), |i: int| L::keys_view(c.leaf_val())[i].as_nat())),
+{
+    lemma_cursor_node_wf::<K, L, S, TRACK, P>(c);
+    let arena = c.tree.arena();
+    let lids = crate::bplus_tree::tree_leaf_ids(c.tree.tree@);
+    let gm = c.gleaf@;
+    let model = c.model();
+    lemma_chain_yields_sorted_model::<K, L, S, TRACK, P>(c.tree);
+    lemma_chain_keys_slice::<L>(arena, lids, gm);
+    let off = chain_offset::<L>(arena, lids, gm) as int;
+    let ks = leaf_word_keys::<L>(arena, lids[gm]);
+    let ck = chain_keys::<L>(arena, lids);
+    assert(ck == model);
+    assert(c.node.as_nat() == lids[gm]);
+    assert forall|i: int, j: int| 0 <= i < j < ks.len() implies (#[trigger] ks[i]) < (#[trigger] ks[j]) by {
+        assert(ck[off + i] == ks[i]);
+        assert(ck[off + j] == ks[j]);
+        assert(model[off + i] < model[off + j]);
+    }
+    assert(Seq::new(L::keys_view(c.leaf_val()).len(), |i: int| L::keys_view(c.leaf_val())[i].as_nat()) =~= ks);
+}
+
+/// The fast path's finish: a target inside the current leaf's key range sits
+/// at `chain_offset(gleaf) + p`, where `p` is the in-leaf split `leaf_find_ge`
+/// returned, because every earlier model key is below the leaf's first key
+/// and every later one above its last (the model is strictly sorted and the
+/// leaf's keys are its window at `chain_offset(gleaf)`).
+pub(crate) proof fn seek_fast_path_finish<K, L, S, const TRACK: bool, P>(
+    c: &BPlusCursor<K, L, S, TRACK, P>, oldc: &BPlusCursor<K, L, S, TRACK, P>, p: usize, tgt: nat,
+)
+    where
+        K: DenseId,
+        L: NodeLayout<Word = K::Index>,
+        S: SearchKind,
+        P: TaggedFamily<L::Node, L::ArenaIdx, TRACK>,
+    requires
+        oldc.cursor_ok(),
+        oldc.node.as_nat() != nil_link::<L>(),
+        c.tree == oldc.tree,
+        c.node == oldc.node,
+        c.leaf == oldc.leaf,
+        c.gleaf@ == oldc.gleaf@,
+        c.pos == p,
+        ({
+            let ks = leaf_word_keys::<L>(c.tree.arena(), c.node.as_nat());
+            &&& ks.len() >= 1
+            &&& ks[0] <= tgt
+            &&& tgt <= ks[ks.len() - 1]
+            &&& p <= ks.len()
+            &&& (forall|i: int| 0 <= i < p ==> #[trigger] ks[i] < tgt)
+            &&& (forall|i: int| p <= i < ks.len() ==> tgt <= #[trigger] ks[i])
+        }),
+        c.gidx@ == seek_target_idx(c.model(), tgt),
+    ensures
+        c.cursor_ok(),
+        c.idx() == seek_target_idx(c.model(), tgt),
+{
+    let arena = c.tree.arena();
+    let lids = crate::bplus_tree::tree_leaf_ids(c.tree.tree@);
+    let gm = c.gleaf@;
+    let model = c.model();
+    assert(c.node.as_nat() == lids[gm]);
+    lemma_chain_yields_sorted_model::<K, L, S, TRACK, P>(c.tree);
+    lemma_chain_keys_slice::<L>(arena, lids, gm);
+    let off = chain_offset::<L>(arena, lids, gm) as int;
+    let ks = leaf_word_keys::<L>(arena, lids[gm]);
+    let n = ks.len() as int;
+    let ck = chain_keys::<L>(arena, lids);
+    assert(ck == model);
+    assert(off + n <= model.len());
+    // The leaf's keys are the model window at `off` (the slice lemma, stated
+    // on the chain term; instantiated here per position).
+    assert forall|q: int| 0 <= q < n implies #[trigger] model[off + q] == ks[q] by {
+        assert(ck[off + q] == ks[q]);
+    }
+    // p < n: the last key is >= tgt, and every key before p is < tgt.
+    assert(p < n) by {
+        if p == n {
+            assert(ks[n - 1] < tgt);
+        }
+    }
+    let r = off + p;
+    assert forall|i: int| 0 <= i < r implies #[trigger] model[i] < tgt by {
+        if i < off {
+            assert(model[i] < model[off]);
+            assert(model[off + 0] == ks[0]);
+        } else {
+            assert(model[off + (i - off)] == ks[i - off]);
+        }
+    }
+    assert forall|i: int| r <= i < model.len() implies tgt <= #[trigger] model[i] by {
+        if i < off + n {
+            assert(model[off + (i - off)] == ks[i - off]);
+        } else {
+            assert(model[off + (n - 1)] == ks[n - 1]);
+            if i > off + n - 1 {
+                assert(model[off + n - 1] < model[i]);
+            }
+        }
+    }
+    lemma_seek_target_idx_unique(model, tgt, r);
+    assert(c.gidx@ == off + p);
+}
+
 pub(crate) proof fn seek_finish_in_leaf<K, L, S, const TRACK: bool, P>(
     c: &BPlusCursor<K, L, S, TRACK, P>, oldc: &BPlusCursor<K, L, S, TRACK, P>, gm: int, pos: usize, tgt: nat,
 )
@@ -9717,6 +9842,53 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
         r
     }
 
+    /// `leaf_find_ge` on the borrowed repr (see `seek_leaf`).
+    fn leaf_find_ge_r(&self, rp: &<L::Node as Tagged>::Repr, word: L::Word) -> (r: usize)
+        requires
+            <L::Node as Tagged>::repr_wf(*rp),
+            L::node_wf(<L::Node as Tagged>::value_of(*rp)),
+            L::is_leaf_spec(<L::Node as Tagged>::value_of(*rp)),
+            // the leaf's keys are strictly sorted (its tree_wf leaf arm); implies
+            // the non-strict `sorted_le` hypothesis in `S::find_ge`'s ensures.
+            crate::bplus_tree::strictly_sorted(
+                Seq::new(L::keys_view(<L::Node as Tagged>::value_of(*rp)).len(), |i: int| L::keys_view(<L::Node as Tagged>::value_of(*rp))[i].as_nat())),
+        ensures
+            r <= L::count_spec(<L::Node as Tagged>::value_of(*rp)),
+            forall|i: int| 0 <= i < r ==> (#[trigger] L::keys_view(<L::Node as Tagged>::value_of(*rp))[i]).as_nat() < word.as_nat(),
+            forall|i: int| r <= i < L::count_spec(<L::Node as Tagged>::value_of(*rp)) ==> word.as_nat() <= (#[trigger] L::keys_view(<L::Node as Tagged>::value_of(*rp))[i]).as_nat(),
+    {
+        let ghost nv: L::Node = <L::Node as Tagged>::value_of(*rp);
+        let ghost ks = Seq::new(L::keys_view(nv).len(), |i: int| L::keys_view(nv)[i].as_nat());
+        let keys = L::keys_r(rp);
+        proof {
+            L::lemma_keys_view_len(nv);
+            // strict order (over as_nat) weakens to the sorted_le precondition.
+            assert forall|i: int, j: int| 0 <= i <= j < keys@.len() implies
+                (#[trigger] keys@[i].as_nat()) <= (#[trigger] keys@[j].as_nat()) by {
+                if i < j { assert(ks[i] < ks[j]); }  // strictly_sorted
+            }
+            assert(crate::bplus_search::sorted_le(keys@));
+        }
+        let r = S::find_ge(keys, word);
+        proof {
+            // `sorted_le(keys@)` was proven above, so it discharges the
+            // hypothesis in `S::find_ge`'s conditional ensures and the full
+            // split-point characterization is available.
+            assert(crate::bplus_search::sorted_le(keys@));
+            // `keys@ == keys_view(node)` (L::keys ensures), so S::find_ge's
+            // split-point ensures transfer to the ghost key view verbatim.
+            assert forall|i: int| 0 <= i < r implies
+                (#[trigger] L::keys_view(nv)[i]).as_nat() < word.as_nat() by {
+                assert(keys@[i].as_nat() < word.as_nat());
+            }
+            assert forall|i: int| r <= i < L::count_spec(nv) implies
+                word.as_nat() <= (#[trigger] L::keys_view(nv)[i]).as_nat() by {
+                assert(word.as_nat() <= keys@[i].as_nat());
+            }
+        }
+        r
+    }
+
     /// `find_gt` over an internal node's separators: first child index `cp` such
     /// that `word < seps[cp]` (descend there). Dispatches to `S::find_gt` on the
     /// node's live separator prefix (production's `S::find_gt(&L::data(&nd)[..n],
@@ -9761,6 +9933,47 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
         cp
     }
 
+    /// `find_child` on the borrowed repr (see `seek_leaf`).
+    fn find_child_r(&self, r: &<L::Node as Tagged>::Repr, word: L::Word) -> (cp: usize)
+        requires
+            <L::Node as Tagged>::repr_wf(*r),
+            L::node_wf(<L::Node as Tagged>::value_of(*r)),
+            !L::is_leaf_spec(<L::Node as Tagged>::value_of(*r)),
+            crate::bplus_tree::strictly_sorted(
+                Seq::new(L::keys_view(<L::Node as Tagged>::value_of(*r)).len(), |i: int| L::keys_view(<L::Node as Tagged>::value_of(*r))[i].as_nat())),
+        ensures
+            cp <= L::count_spec(<L::Node as Tagged>::value_of(*r)),
+            forall|j: int| 0 <= j < cp ==> (#[trigger] L::keys_view(<L::Node as Tagged>::value_of(*r))[j]).as_nat() <= word.as_nat(),
+            forall|j: int| cp <= j < L::count_spec(<L::Node as Tagged>::value_of(*r)) ==> word.as_nat() < (#[trigger] L::keys_view(<L::Node as Tagged>::value_of(*r))[j]).as_nat(),
+    {
+        let ghost nv: L::Node = <L::Node as Tagged>::value_of(*r);
+        let ghost ks = Seq::new(L::keys_view(nv).len(), |i: int| L::keys_view(nv)[i].as_nat());
+        let keys = L::keys_r(r);
+        proof {
+            L::lemma_keys_view_len(nv);
+            assert forall|i: int, j: int| 0 <= i <= j < keys@.len() implies
+                (#[trigger] keys@[i].as_nat()) <= (#[trigger] keys@[j].as_nat()) by {
+                if i < j { assert(ks[i] < ks[j]); }  // strictly_sorted
+            }
+            assert(crate::bplus_search::sorted_le(keys@));
+        }
+        let cp = S::find_gt(keys, word);
+        proof {
+            // Same transfer as leaf_find_ge's, at the `<=` / `<` boundary;
+            // `sorted_le(keys@)` again discharges the conditional ensures.
+            assert(crate::bplus_search::sorted_le(keys@));
+            assert forall|j: int| 0 <= j < cp implies
+                (#[trigger] L::keys_view(nv)[j]).as_nat() <= word.as_nat() by {
+                assert(keys@[j].as_nat() <= word.as_nat());
+            }
+            assert forall|j: int| cp <= j < L::count_spec(nv) implies
+                word.as_nat() < (#[trigger] L::keys_view(nv)[j]).as_nat() by {
+                assert(word.as_nat() < keys@[j].as_nat());
+            }
+        }
+        cp
+    }
+
     /// Descend root→leaf to the leaf that would hold `word`, returning
     /// `(leaf, pos, gm)`. Proven: the descent lands on chain leaf `gm` with `leaf
     /// == tree_leaf_ids[gm]`, `pos == leaf_find_ge` within it, and the GLOBAL
@@ -9771,6 +9984,7 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
     /// seek_target_idx(tree_keys(cur)) == seek_target_idx(model)`; each step uses
     /// lemma_seek_idx_descent (model split) + lemma_chain_offset_child (acc law).
     pub(crate) fn seek_leaf(&self, word: L::Word) -> (res: (L::ArenaIdx, usize, Ghost<int>))
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires self.wf(),
         ensures
             ({
@@ -9818,9 +10032,11 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
                 done ==> cur is Leaf,
             decreases crate::bplus_tree::tree_height(cur), (if done { 0int } else { 1int }),
         {
-            let node = self.nodes.get_index(idx);
+            // Borrowed repr, no node copy; `node` is its value, for the proofs.
+            let node_r = self.nodes.get_repr_ref_at(idx);
+            let ghost node: L::Node = <L::Node as Tagged>::value_of(*node_r);
             proof { assert(self.arena()[idx.as_nat() as int] == node); }
-            if L::is_leaf(&node) {
+            if L::is_leaf_r(node_r) {
                 proof {
                     match cur {
                         Tree::Leaf { .. } => {}
@@ -9845,14 +10061,14 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
                 lemma_inner_facts::<L>(self.arena(), idx.as_nat(), cur->Inner_seps, kids, h);
                 lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur, idx.as_nat(), node);
             }
-            let cp = self.find_child(&node, word);
+            let cp = self.find_child_r(node_r, word);
             proof {
                 // find_child's separator characterization feeds the descent step.
                 seek_descend_step::<K, L, S, TRACK, P>(self, cur, node, word, cp as int, gm, acc, Ghost(lids));
             }
             let ghost new_acc = acc + crate::bplus_tree::forest_keys(kids.subrange(0, cp as int)).len() as int;
             let ghost new_gm = gm + crate::bplus_tree::leaf_id_offset(kids, cp as int) as int;
-            idx = L::child(&node, cp);
+            idx = L::child_r(node_r, cp);
             proof {
                 // child height is h-1 < h, so the descent decreases tree_height(cur).
                 crate::bplus_tree::lemma_forest_wf_at(kids, (h - 1) as nat,
@@ -9867,7 +10083,8 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
             }
         }
         // at the leaf: leaf_find_ge gives pos == seek_target_idx(tree_keys(cur), word).
-        let node = self.nodes.get_index(idx);
+        let node_r = self.nodes.get_repr_ref_at(idx);
+        let ghost node: L::Node = <L::Node as Tagged>::value_of(*node_r);
         proof {
             // cur is a Leaf (done invariant); its keys are sorted (tree_wf), and
             // keys_view(node) projects to them — leaf_find_ge's split == seek index.
@@ -9884,7 +10101,7 @@ impl<K, L, S, const TRACK: bool, P> BPlusTreeSet<K, L, S, TRACK, P>
             }
             lemma_tree_wf_sorted_seps_view::<L>(self.arena(), cur, idx.as_nat(), node);
         }
-        let p = self.leaf_find_ge(&node, word);
+        let p = self.leaf_find_ge_r(node_r, word);
         ret_pos = p;
         proof {
             seek_leaf_finish::<K, L, S, TRACK, P>(self, cur, node, word, p, gm, acc, Ghost(lids));
@@ -9917,12 +10134,13 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
     /// nowhere"; modeling it as the well-formed exhausted state is what lets the
     /// fast path in `seek` trust `node != NIL` ⟹ positioned.)
     pub fn new(tree: &'a BPlusTreeSet<K, L, S, TRACK, P>) -> (c: Self)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires tree.wf(),
         ensures c.tree_ref() == tree, c.cursor_ok(), c.idx() == c.model().len(),
     {
         let nilv = Self::nil();   // nilv.as_nat() == nil_link
         let c = BPlusCursor {
-            tree, node: nilv, pos: 0, leaf: L::new_leaf(),
+            tree, node: nilv, pos: 0, leaf: None,
             gidx: Ghost(crate::bplus_tree::tree_keys(tree.tree@).len() as int),
             gleaf: Ghost(0),
             _k: core::marker::PhantomData,
@@ -9967,9 +10185,17 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
 
     /// The cached leaf is the arena node the cursor stands on (vacuous when
     /// exhausted).
+    /// The cached leaf's value: the node the borrowed repr decodes to.
+    pub open(crate) spec fn leaf_val(self) -> L::Node {
+        <L::Node as Tagged>::value_of(*self.leaf->Some_0)
+    }
+
     pub open(crate) spec fn leaf_cached(self) -> bool {
-        self.node.as_nat() != nil_link::<L>()
-            ==> self.leaf == self.tree.arena()[self.node.as_nat() as int]
+        self.node.as_nat() != nil_link::<L>() ==> {
+            &&& self.leaf is Some
+            &&& <L::Node as Tagged>::repr_wf(*self.leaf->Some_0)
+            &&& self.leaf_val() == self.tree.arena()[self.node.as_nat() as int]
+        }
     }
 
     /// The cursor's full invariant: positioned correctly and holding the leaf
@@ -9990,7 +10216,61 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
     /// optimization, omitted from the verified version, which always descends. The
     /// observable result is identical; the fast path is exercised by the property
     /// tests on the production-shaped exec.)
+    /// The current leaf answers a target inside its own key range: position
+    /// there and return true; otherwise leave the cursor untouched and return
+    /// false (the caller descends). The cached copy is the arena leaf
+    /// (`leaf_cached`), so no arena read. A target below the first key may
+    /// belong to an earlier leaf and one above the last to a later one.
+    #[inline(always)]
+    fn seek_current_leaf(&mut self, word: L::Word, target: K) -> (r: bool)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
+        requires
+            old(self).cursor_ok(),
+            old(self).node.as_nat() != nil_link::<L>(),
+            word.as_nat() == target.id_nat(),
+        ensures
+            final(self).tree_ref() == old(self).tree_ref(),
+            r ==> final(self).cursor_ok()
+                && final(self).idx() == seek_target_idx(final(self).model(), target.id_nat()),
+            !r ==> *final(self) == *old(self),
+    {
+        proof { seek_fast_path_pre::<K, L, S, TRACK, P>(self); }
+        let ghost ti = seek_target_idx(self.model(), target.id_nat());
+        let cur_r = self.leaf.unwrap();
+        let ghost cur: L::Node = <L::Node as Tagged>::value_of(*cur_r);
+        let keys = L::keys_r(cur_r);
+        let n = keys.len();
+        if n == 0 {
+            return false;
+        }
+        let first = keys[0];
+        let last = keys[n - 1];
+        if !(first.as_usize() <= word.as_usize() && word.as_usize() <= last.as_usize()) {
+            return false;
+        }
+        let p = self.tree.leaf_find_ge_r(cur_r, word);
+        self.pos = p;
+        proof {
+            self.gidx@ = ti;
+            // Bridge: the exec words are the leaf's nat keys.
+            let ks = leaf_word_keys::<L>(self.tree.arena(), self.node.as_nat());
+            L::lemma_keys_view_len(cur);  // count_spec == |keys_view|, the split's bound
+            assert(ks.len() == keys@.len());
+            assert(ks[0] == first.as_nat());
+            assert(ks[ks.len() - 1] == last.as_nat());
+            assert forall|i: int| 0 <= i < p implies #[trigger] ks[i] < target.id_nat() by {
+                assert(ks[i] == L::keys_view(cur)[i].as_nat());
+            }
+            assert forall|i: int| p <= i < ks.len() implies target.id_nat() <= #[trigger] ks[i] by {
+                assert(ks[i] == L::keys_view(cur)[i].as_nat());
+            }
+            seek_fast_path_finish::<K, L, S, TRACK, P>(self, old(self), p, target.id_nat());
+        }
+        true
+    }
+
     pub fn seek(&mut self, target: K)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires old(self).cursor_ok(),
         ensures
             final(self).cursor_ok(),
@@ -10001,23 +10281,38 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
         let word: L::Word = target.to_index();    // word.as_nat() == target.id_nat()
         let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
         let ghost ti = seek_target_idx(self.model(), target.id_nat());
+
+        // Fast path (production parity, chapter 20 item 4): the leaf the cursor
+        // stands on answers a target inside its own key range without a
+        // descent; see `seek_current_leaf`.
+        if self.node.as_usize() != nil.as_usize() {
+            proof { assert(self.node.as_nat() != nil_link::<L>()); }
+            if self.seek_current_leaf(word, target) {
+                return;
+            }
+        }
+
         let (leaf, pos, gm) = self.tree.seek_leaf(word);
         // seek_leaf: leaf == lids[gm@], pos <= |leaf gm@|, chain_offset(gm@)+pos == ti.
+        // The leaf is decoded here once for the cursor's cached copy. (Returning
+        // it from `seek_leaf` by value was measured: a node is a decoded 1 KB
+        // value, and the extra copy cost the shuffled seek 11 to 13 per cent.)
         proof {
             // leaf == lids[gm@] is a real leaf id, so it is in arena range (for get).
             lemma_cursor_node_wf_at::<K, L, S, TRACK, P>(self.tree, gm@);
             assert(leaf.as_nat() == lids[gm@]);
             assert(leaf.as_nat() < self.tree.arena().len());
         }
-        let node = self.tree.nodes.get_index(leaf);
-        let cnt = L::count(&node);
+        let node_r = self.tree.nodes.get_repr_ref_at(leaf);
+        let ghost node: L::Node = <L::Node as Tagged>::value_of(*node_r);
+        let cnt = L::count_r(node_r);
         proof {
-            assert(node == self.tree.arena()[leaf.as_nat() as int]);  // get ensures
+            assert(node == self.tree.arena()[leaf.as_nat() as int]);  // get_repr_ref ensures
             L::lemma_keys_view_len(node);
         }
         if pos < cnt {
             // target falls within leaf gm@ at pos: position there, idx == ti.
-            self.leaf = node;
+            self.leaf = Some(node_r);
             self.node = leaf;
             self.pos = pos;
             proof {
@@ -10028,7 +10323,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
         } else {
             // pos == |leaf gm@|: target is past leaf gm@'s keys. Advance over the
             // end via link to leaf gm@+1 (or NIL), at pos 0 — idx still ti.
-            let link = L::link(&node);
+            let link = L::link_r(node_r);
             self.node = link;
             self.pos = 0;
             proof {
@@ -10041,7 +10336,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
                     assert(self.node.as_nat() != nil_link::<L>());
                     lemma_cursor_node_wf::<K, L, S, TRACK, P>(self);  // node in arena range
                 }
-                self.leaf = self.tree.nodes.get_index(self.node);
+                self.leaf = Some(self.tree.nodes.get_repr_ref_at(self.node));
             }
         }
     }
@@ -10052,6 +10347,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
     /// with `gidx == 0` (or `gidx == |model| == 0` for the empty tree). The
     /// enumeration entry point: `seek_first` then `step`* reads the sorted set.
     pub fn seek_first(&mut self)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires old(self).tree_ref().wf(),
         ensures
             final(self).cursor_ok(),
@@ -10087,9 +10383,10 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
             // `done` (without descending) cuts the second component to 0.
             decreases crate::bplus_tree::tree_height(cur), (if done { 0int } else { 1int }),
         {
-            let node = self.tree.nodes.get_index(idx);
+            let node_r = self.tree.nodes.get_repr_ref_at(idx);
+            let ghost node: L::Node = <L::Node as Tagged>::value_of(*node_r);
             proof { assert(self.tree.arena()[idx.as_nat() as int] == node); }
-            if L::is_leaf(&node) {
+            if L::is_leaf_r(node_r) {
                 // is_leaf(arena[idx]) + binds(cur) at idx ⟹ cur is Leaf (the binds
                 // Inner arm would force !is_leaf). Record it in the `done` invariant.
                 proof {
@@ -10134,12 +10431,13 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
                     L::leaf_cap_spec(), L::key_cap_spec());
             }
             let cp0: usize = 0;
-            idx = L::child(&node, cp0);
+            idx = L::child_r(node_r, cp0);
             proof { cur = cur->Inner_kids[0]; }
         }
         // at the leftmost leaf `idx` (== tree_leaf_ids(tree@)[0]).
-        let node = self.tree.nodes.get_index(idx);
-        let cnt = L::count(&node);
+        let node_r = self.tree.nodes.get_repr_ref_at(idx);
+        let ghost node: L::Node = <L::Node as Tagged>::value_of(*node_r);
+        let cnt = L::count_r(node_r);
         let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
         let nil = Self::nil();
         proof {
@@ -10163,7 +10461,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
         }
         if cnt > 0 {
             // non-empty leftmost leaf: position (leaf, 0) at model index 0.
-            self.leaf = node;
+            self.leaf = Some(node_r);
             self.node = idx;
             self.pos = 0;
             proof {
@@ -10213,6 +10511,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
     /// and `None` exactly when exhausted (`idx == |model|`). This is the
     /// enumeration-read half of the leapfrog cursor's soundness.
     pub fn key(&self) -> (r: Option<K>)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires self.cursor_ok(),
         ensures
             self.idx() < self.model().len() ==> (match r {
@@ -10233,14 +10532,14 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
             assert(self.node.as_nat() != nil_link::<L>());
             lemma_cursor_node_wf::<K, L, S, TRACK, P>(self);  // node_wf(arena[node]), node in range
         }
-        let ghost node = self.leaf;
+        let ghost node = self.leaf_val();
         let ghost lids = crate::bplus_tree::tree_leaf_ids(self.tree.tree@);
         proof {
             assert(node == self.tree.arena()[self.node.as_nat() as int]);  // leaf_cached
             // pos < count(node) == |leaf_word_keys(node)| (cursor_wf positioned arm).
             L::lemma_keys_view_len(node);
         }
-        let w = L::key(&self.leaf, self.pos);
+        let w = L::key_r(self.leaf.unwrap(), self.pos);
         let wu = w.as_usize();  // wu as nat == w.as_nat() (as_usize ensures)
         let r = K::from_usize(wu);
         proof {
@@ -10267,6 +10566,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
     /// exhausted end). With `key()`, this enumerates the sorted set in order: the
     /// `step`-by-`step` walk from `seek_first` visits `model[0]`, `model[1]`, ... .
     pub fn step(&mut self)
+        where <P as TaggedFamily<L::Node, L::ArenaIdx, TRACK>>::Store: crate::inline_store::ReprBorrow<L::Node, L::ArenaIdx, TRACK>
         requires old(self).cursor_ok(),
         ensures
             final(self).cursor_ok(),
@@ -10291,9 +10591,9 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
         }
         // positioned. Read the current leaf; advance within it, or follow `link`.
         proof { lemma_cursor_node_wf::<K, L, S, TRACK, P>(self); }
-        let ghost node = self.leaf;
+        let ghost node = self.leaf_val();
         proof { assert(node == arena[self.node.as_nat() as int]); }  // leaf_cached
-        let cnt = L::count(&self.leaf);
+        let cnt = L::count_r(self.leaf.unwrap());
         let ghost m = self.gleaf@;
         proof {
             L::lemma_keys_view_len(node);
@@ -10310,7 +10610,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
             // ran off leaf m (pos was cnt-1, now == cnt): follow link to leaf m+1
             // (or NIL). `leaf_links_ok` (a wf clause) pins link(arena[lids[m]]) ==
             // (m+1 < len ? lids[m+1] : nil_link).
-            let link = L::link(&self.leaf);
+            let link = L::link_r(self.leaf.unwrap());
             self.node = link;
             self.pos = 0;
             proof {
@@ -10356,7 +10656,7 @@ impl<'a, K, L, S, const TRACK: bool, P> BPlusCursor<'a, K, L, S, TRACK, P>
                     assert(self.node.as_nat() != nil_link::<L>());
                     lemma_cursor_node_wf::<K, L, S, TRACK, P>(self);  // next leaf in arena range
                 }
-                self.leaf = self.tree.nodes.get_index(self.node);
+                self.leaf = Some(self.tree.nodes.get_repr_ref_at(self.node));
             }
         } else {
             // stayed within leaf m: node/gleaf unchanged, pos < cnt == |leaf m|,

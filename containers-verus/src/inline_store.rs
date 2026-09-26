@@ -27,6 +27,41 @@ verus! {
 ///
 /// Invariants (`wf`): all reprs are well-formed; `data@.len() < I::max_nat()`.
 /// The abstract `data()` is `T::value_of` applied pointwise. The abstract
+/// A borrowed read of the stored repr, for stores that hold reprs: the
+/// value is `T::value_of(*r)`, and nothing is decoded or copied. The B+ tree
+/// cursor reads its nodes this way (a decoded node is the size of its key
+/// array). Implemented by the inline store; the parallel and trail stores
+/// hold values, not reprs, and do not offer it.
+pub trait ReprBorrow<T, I, const TRACK: bool>: DiffStore<T, I, TRACK>
+where
+    T: Tagged,
+    I: IndexLike,
+{
+    /// Total with documented panic: an out-of-range index refuses; the
+    /// contract is conditional on the bound, which the verified callers hold
+    /// as a precondition of their own.
+    fn get_repr_ref(&self, i: I) -> (r: &T::Repr)
+        requires self.wf(),
+        ensures i.as_nat() < self.data().len() ==> {
+            &&& T::repr_wf(*r)
+            &&& T::value_of(*r) == self.data()[i.as_nat() as int]
+        };
+}
+
+impl<T, I, const TRACK: bool> ReprBorrow<T, I, TRACK> for InlineStore<T, I>
+where
+    T: Tagged,
+    I: IndexLike,
+{
+    #[inline(always)]
+    fn get_repr_ref(&self, i: I) -> (r: &T::Repr) {
+        if !(i.as_usize() < self.data.as_slice().len()) {
+            crate::guard::refuse("InlineStore::get_repr_ref: index out of bounds");
+        }
+        &self.data[i.as_usize()]
+    }
+}
+
 /// `captured()` is `T::tag_of` applied pointwise.
 pub struct InlineStore<T, I>
 where
@@ -50,6 +85,11 @@ where
     /// Spec helper: `captured()` as the `tag_of`-mapped sequence of reprs.
     pub open(crate) spec fn captured_spec(&self) -> Seq<bool> {
         Seq::new(self.data@.len(), |i: int| T::tag_of(self.data@[i]))
+    }
+
+    /// Spec helper: no repr carries the tag (the untracked half of `wf`).
+    pub open(crate) spec fn untagged_spec(&self) -> bool {
+        forall|i: int| 0 <= i < self.data@.len() ==> !(#[trigger] T::tag_of(self.data@[i]))
     }
 
     /// Spec helper: the `DiffStore::wf` body (factored so the open trait-impl
@@ -94,11 +134,22 @@ where
 {
     open spec fn data(&self) -> Seq<T> { self.data_spec() }
     open spec fn captured(&self) -> Seq<bool> { self.captured_spec() }
-    open spec fn wf(&self) -> bool { self.wf_spec() }
+    // Untracked, nothing is ever captured, so no repr carries the tag: every
+    // write goes through `into_repr` (tag-clear by contract) and the tag
+    // setters below return early unless `TRACK`. Stated so reads can decode
+    // without the mask.
+    open spec fn wf(&self) -> bool {
+        &&& self.wf_spec()
+        &&& (!TRACK ==> self.untagged_spec())
+    }
 
     #[inline(always)]
     fn get(&self, i: I) -> T {
-        T::from_repr(&self.data[i.as_usize()])
+        if TRACK {
+            T::from_repr(&self.data[i.as_usize()])
+        } else {
+            T::from_repr_clean(&self.data[i.as_usize()], crate::tagged::CrateOnly::new())
+        }
     }
 
     #[inline(always)]
@@ -134,6 +185,9 @@ where
     #[inline(always)]
     fn mark_captured(&mut self, i: I) {
         broadcast use crate::diff_store::lemma_inline_discipline;
+        if !TRACK {
+            return;
+        }
         let iu = i.as_usize();
         let mut r = self.data[iu];
         T::set_tag(&mut r);
@@ -458,6 +512,19 @@ where
                     }
                 }
             }
+            proof {
+                // Untracked: a tag now would be a capture now, hence one before,
+                // and the untracked store had none.
+                if !TRACK {
+                    assert forall|j: int| 0 <= j < self.data@.len()
+                        implies !(#[trigger] T::tag_of(self.data@[j])) by {
+                        if T::tag_of(self.data@[j]) {
+                            assert(self.captured_spec()[j]);
+                            assert(old(self).captured_spec()[j]);
+                        }
+                    }
+                }
+            }
 
     }
 
@@ -530,19 +597,19 @@ where
 
     #[inline(always)]
     fn is_empty(&self) -> bool {
-        self.data.len() == 0
+        self.data.as_slice().len() == 0
     }
 
     #[inline(always)]
     fn raw_len(&self) -> (n: usize) {
-        self.data.len()
+        self.data.as_slice().len()
     }
 
     #[inline(always)]
     fn len(&self) -> I {
         // Production's line verbatim (containers/src/diff_store.rs:246); vstd's
         // `Option::expect` spec requires `is Some`, discharged by wf.
-        I::try_from_usize(self.data.len()).expect("len overflow")
+        I::try_from_usize(self.data.as_slice().len()).expect("len overflow")
     }
 
     #[inline(always)]

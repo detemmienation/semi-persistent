@@ -85,6 +85,30 @@ fn bench_two_stack(c: &mut Criterion) {
     g.finish();
 }
 
+/// A long run whose every mark trips the size trigger while the hot floor
+/// keeps every frame: `frames_to_compress` is 0 and `flush_cold(0)` runs on
+/// each mark (chapter 20 item 5, the zero-work exit). Beside it, the same run
+/// with a floor of 4 for the frames actually moving.
+fn bench_two_stack_long_run(c: &mut Criterion) {
+    let base_bytes = 1 << 10; // small "live payload": the 5% trigger fires on every mark
+    let distinct = 256u32;
+    let zero_frame = ColumnConfig::value_dict(5, 1 << 20);
+    let moving = ColumnConfig::value_dict(5, 4);
+
+    let mut g = c.benchmark_group("two_stack/long_run");
+    g.bench_with_input(
+        BenchmarkId::new("valuedict", "zero_frame_flush"),
+        &zero_frame,
+        |b, &cfg| b.iter(|| black_box(run(cfg, base_bytes, distinct))),
+    );
+    g.bench_with_input(
+        BenchmarkId::new("valuedict", "hot4_flushing"),
+        &moving,
+        |b, &cfg| b.iter(|| black_box(run(cfg, base_bytes, distinct))),
+    );
+    g.finish();
+}
+
 fn report_footprints(
     base_bytes: usize,
     distinct: u32,
@@ -136,5 +160,58 @@ fn report_footprints(
     eprintln!();
 }
 
-criterion_group!(benches, bench_two_stack);
+/// The cold side on its own: `MARKS` frames of `WRITES_PER_MARK` diffs pushed
+/// through `CompressedStack` in each mode, then popped back in full (the pop
+/// decodes; the two-stack log has no cold restore yet, so this is the path
+/// that reaches the decoders). Values from a small alphabet so ValueDict
+/// packs sub-byte codes; indices consecutive so IndexRuns coalesces.
+fn bench_two_stack_cold_pop_long_run(c: &mut Criterion) {
+    use verus::CompressedStack;
+    use verus::diff_compress::CompressionMode;
+    let distinct = black_box(4u32);
+    let frames: Vec<Vec<(u32, u32)>> = {
+        let mut rng = XorShift(0x2545F491);
+        let mut cell: u32 = 0;
+        (0..MARKS)
+            .map(|_| {
+                (0..WRITES_PER_MARK)
+                    .map(|_| {
+                        let v = (rng.next() % distinct as u64) as u32;
+                        let c = cell;
+                        cell = cell.wrapping_add(1) & 0x000F_FFFF;
+                        (v, c)
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    let mut g = c.benchmark_group("two_stack/cold_pop_long_run");
+    for (label, mode) in [
+        ("plain", CompressionMode::None),
+        ("valuedict", CompressionMode::ValueDict),
+        ("indexruns", CompressionMode::IndexRuns),
+    ] {
+        g.bench_function(label, |b| {
+            b.iter(|| {
+                let mut cs: CompressedStack<u32, u32> = CompressedStack::new();
+                for f in &frames {
+                    cs.push_frame(f, mode);
+                }
+                let mut total = 0usize;
+                for _ in 0..frames.len() {
+                    total += cs.pop_frame().len();
+                }
+                black_box(total)
+            })
+        });
+    }
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_two_stack,
+    bench_two_stack_long_run,
+    bench_two_stack_cold_pop_long_run
+);
 criterion_main!(benches);

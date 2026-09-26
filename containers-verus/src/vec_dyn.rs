@@ -91,14 +91,6 @@ where
         }
     }
 
-    pub open(crate) spec fn diff_log_len_spec(&self) -> nat {
-        match self {
-            VecD::Inline(v) => v.diff_log_len_spec(),
-            VecD::Parallel(v) => v.diff_log_len_spec(),
-            VecD::Trail(v) => v.diff_log_len_spec(),
-        }
-    }
-
     /// Frame `f` (any tier) captures index `j`.
     pub open(crate) spec fn frame_captures(&self, f: int, j: nat) -> bool {
         match self {
@@ -216,22 +208,7 @@ where
         }
     }
 
-    pub(crate) fn push(&mut self, value: T)
-        requires
-            old(self).wf(),
-            old(self).view().len() + 1 < I::max_nat(),
-        ensures
-            final(self).wf(),
-            final(self).view() == old(self).view().push(value),
-            final(self).snapshots_view() == old(self).snapshots_view(),
-    {
-        match self {
-            VecD::Inline(v) => v.push(value),
-            VecD::Parallel(v) => v.push(value),
-            VecD::Trail(v) => v.push(value),
-        }
-    }
-
+    #[inline(always)]
     pub fn can_push(&self) -> (b: bool)
         requires self.wf(),
         ensures b == (self.view().len() + 1 < I::max_nat()),
@@ -243,6 +220,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn try_push(&mut self, value: T) -> (r: Result<(), crate::error::ContainerError>)
         requires old(self).wf(),
         ensures
@@ -276,6 +254,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn pop(&mut self) -> (r: Option<T>)
         requires old(self).wf(),
         ensures
@@ -295,6 +274,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn push_untracked(&mut self, value: T)
         requires old(self).wf(),
         ensures
@@ -302,7 +282,6 @@ where
             (old(self).untracked() && old(self).view().len() + 1 < I::max_nat()) ==> {
                 &&& final(self).untracked()
                 &&& final(self).view() == old(self).view().push(value)
-                &&& final(self).diff_log_len_spec() == 0
             },
     {
         match self {
@@ -312,6 +291,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn pop_untracked(&mut self) -> (r: Option<T>)
         requires old(self).wf(),
         ensures
@@ -323,7 +303,6 @@ where
                 &&& (old(self).view().len() > 0
                     ==> r == Some(old(self).view().last())
                         && final(self).view() == old(self).view().drop_last())
-                &&& final(self).diff_log_len_spec() == 0
             },
     {
         match self {
@@ -333,6 +312,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn set_untracked(&mut self, i: I, value: T)
         requires old(self).wf(),
         ensures
@@ -340,7 +320,6 @@ where
             (old(self).untracked() && i.as_nat() < old(self).view().len()) ==> {
                 &&& final(self).untracked()
                 &&& final(self).view() == old(self).view().update(i.as_nat() as int, value)
-                &&& final(self).diff_log_len_spec() == 0
             },
     {
         match self {
@@ -375,6 +354,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn as_slice(&self) -> (r: Option<&[T]>)
         ensures r matches Some(s) ==> s@ == self.view(),
     {

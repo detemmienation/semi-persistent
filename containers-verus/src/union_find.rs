@@ -1068,15 +1068,48 @@ where
         }
         let ra = self.find(a);
         let rb = self.find(b);
+        self.union_directed_roots_core(ra, rb, prefer_a)
+    }
+
+    /// The directed union of two roots already found: the survivor is `ra`
+    /// when `prefer_a`, else `rb`. The finds happen at the caller when it
+    /// needs the roots for its own decision (`EClasses` chooses the survivor
+    /// by use-list length) and are passed down, not repeated. Inline-always:
+    /// the symbol table of the e-class bench showed it out of line (548
+    /// bytes, one call per directed merge) where the previous union core
+    /// had been inlined into `merge_with`, at 7 per cent on the directed
+    /// cascade.
+    #[inline(always)]
+    pub(crate) fn union_directed_roots_core(&mut self, ra: T, rb: T, prefer_a: bool)
+        -> (r: Option<(T, T)>)
+        requires
+            old(self).wf(),
+            ra.id_nat() < old(self).n_spec(),
+            rb.id_nat() < old(self).n_spec(),
+            old(self).roots_view()[ra.id_nat() as int] as nat == ra.id_nat(),
+            old(self).roots_view()[rb.id_nat() as int] as nat == rb.id_nat(),
+        ensures
+            final(self).wf(),
+            final(self).n_spec() == old(self).n_spec(),
+            final(self).parent_snapshots_view() == old(self).parent_snapshots_view(),
+            final(self).rank_snapshots_view() == old(self).rank_snapshots_view(),
+            final(self).roots_snapshots_view() == old(self).roots_snapshots_view(),
+            final(self).dist_snapshots_view() == old(self).dist_snapshots_view(),
+            r is None <==> ra.id_nat() == rb.id_nat(),
+            r is None ==> final(self).roots_view() == old(self).roots_view(),
+            r matches Some((s, ab)) ==> {
+                &&& s.id_nat() == (if prefer_a { ra.id_nat() } else { rb.id_nat() })
+                &&& ab.id_nat() == (if prefer_a { rb.id_nat() } else { ra.id_nat() })
+                &&& ra.id_nat() != rb.id_nat()
+                &&& final(self).roots_view()
+                    == merge_roots(old(self).roots_view(), s.id_nat(), ab.id_nat())
+            },
+    {
         if ra.to_usize() == rb.to_usize() {
             proof { T::lemma_id_injective(ra, rb); }
             return None;
         }
-        proof {
-            assert(ra.id_nat() != rb.id_nat());
-            assert(self.roots@[ra.id_nat() as int] as nat == ra.id_nat());
-            assert(self.roots@[rb.id_nat() as int] as nat == rb.id_nat());
-        }
+        proof { assert(ra.id_nat() != rb.id_nat()); }
         let (s, ab) = if prefer_a { (ra, rb) } else { (rb, ra) };
         // Match production's rank heuristic on directed unions: a forced
         // survivor may be the shorter tree, so raise its rank when possible.
@@ -1569,7 +1602,11 @@ where
         if !PROOFS {
             return false;
         }
-        if self.find_const(a) != self.find_const(b) {
+        // Each root found once (chapter 20 item 4): the same-root test, the
+        // LCA seed and the extraction below all use these two.
+        let ra = self.find_const(a);
+        let rb = self.find_const(b);
+        if ra != rb {
             return false;
         }
         let pp = self.parent_proof.as_ref().unwrap();
@@ -1587,7 +1624,7 @@ where
         for id in &buf.path_a {
             buf.seen.insert(id.as_usize());
         }
-        let mut lca = self.find_const(a);
+        let mut lca = ra;
         for &node in &buf.path_b {
             if buf.seen.contains(&node.as_usize()) {
                 lca = node;
@@ -1595,7 +1632,7 @@ where
             }
         }
 
-        self.explain_with_lca(a, b, lca, buf)
+        self.explain_from_lca(a, b, lca, buf)
     }
 
     /// Explain `a ≡ b` using an LCA supplied by a batch proof-forest index.
@@ -1608,6 +1645,15 @@ where
         if !PROOFS || self.find_const(a) != self.find_const(b) {
             return false;
         }
+        self.explain_from_lca(a, b, lca, buf)
+    }
+
+    /// The extraction, with the common root already established by the
+    /// caller (`explain` found both roots once; `explain_with_lca` tested
+    /// them). Outside the verified block, so the contract is documented and
+    /// debug-asserted rather than a `requires`.
+    fn explain_from_lca(&self, a: T, b: T, lca: T, buf: &mut ProofBuf<T, J>) -> bool {
+        debug_assert!(PROOFS && self.find_const(a) == self.find_const(b));
         let pp = self.parent_proof.as_ref().unwrap();
         let j = self.justification.as_ref().unwrap();
         let steps_start = buf.steps.len();
