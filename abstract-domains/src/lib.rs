@@ -32,6 +32,7 @@ pub mod interval_z;
 pub mod lattice;
 pub mod nats;
 pub mod semantics;
+pub mod strided;
 pub mod tbit;
 pub mod tnum;
 pub mod transfer;
