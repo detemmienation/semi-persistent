@@ -263,12 +263,25 @@ fn strided_canonical_form_is_unique() {
     assert_eq!(b.bounds(), c.bounds());
 }
 
-/// Same stride, compatible residue: join is exact, just widens the bounds.
+/// Same stride, compatible residue: join widens the bounds to the least
+/// upper bound the domain can represent -- not necessarily the exact
+/// union. This example happens to be exact (11 = 8 + 3, no gap between the
+/// operands), but see `strided_join_same_residue_is_not_always_exact`
+/// below for one that isn't.
 #[test]
-fn strided_join_same_residue_is_exact() {
+fn strided_join_same_residue_is_the_least_upper_bound() {
     let a = si(3, 2, 8); // {2, 5, 8}
     let b = si(3, 11, 14); // {11, 14}, 11 == 2 (mod 3)
     assert_eq!(a.join(&b).bounds(), (3, 2, 14));
+}
+
+#[test]
+fn strided_join_same_residue_is_not_always_exact() {
+    let a = si(3, 2, 8);
+    let b = si(3, 14, 17);
+    let j = a.join(&b);
+    assert!(j.contains(11));
+    assert!(!a.contains(11) && !b.contains(11));
 }
 
 /// Two distinct singletons: the two-point set is exactly representable as

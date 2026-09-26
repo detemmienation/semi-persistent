@@ -1,12 +1,12 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-09-26.
+Last refreshed: 2026-09-27.
 
 ## Current result
 
 ```text
 cargo verus verify
-1116 verified, 0 errors
+1148 verified, 0 errors
 ```
 
 The project source contains no executable `admit()` or `assume()` calls. CI
@@ -27,15 +27,22 @@ The `d128` macro invocation remains disabled because its bitvector obligations
 exceed the current solver capacity. Do not describe `u128` as an enabled or
 verified executable instance.
 
-The separate Rust mirror suite contains 47 tests:
+Two Rust test suites provide runtime evidence, with different philosophies.
+The mirror suite hand-reimplements each macro-stamped legacy type and fuzzes
+the reimplementation against itself; it is randomized/exhaustive evidence,
+not an independent proof that the mirror matches the verified definitions:
 
 ```text
-cargo test -p semi-persistent-abstract-domains --test fuzz
+cargo test -p semi-persistent-abstract-domains --test fuzz   # 32 tests
 ```
 
-Those tests mirror the Verus definitions and provide randomized/exhaustive
-finite evidence. They are not an independent proof that a separate executable
-implementation corresponds to the verified definitions.
+The `Domain`-trait suite (`doc/domain-traits.md`'s convention) instead calls
+the real executable code directly and brute-forces small (`u8`) instances
+against it -- no hand-written reimplementation to drift out of sync:
+
+```text
+cargo test -p semi-persistent-abstract-domains --test domain_traits   # 9 tests
+```
 
 ## Layer status
 
@@ -44,8 +51,8 @@ implementation corresponds to the verified definitions.
 | L1 | bit primitives and infinite-bitstring natural operations | proved |
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
-| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval`, `ReducedProduct` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
-| L4 | `StridedInterval` at four enabled widths | representation, normalization, and join (Weeks 4-5 of Task 1); not yet in `ReducedProduct` |
+| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval`, `ReducedProduct` at four enabled widths (macro-stamped, `domains.rs`) | every method verifies its stated contract; containment scope is listed below |
+| L4 | `StridedInterval<W>` (`strided.rs`), ported onto the shared `Domain`/`Word` traits from `doc/domain-traits.md` | `wf` is canonical (`lemma_canonical` proved); `leq`/`join`/`meet`/`widen` implemented; not yet in a `Product` |
 
 All enabled L4 results are proved well formed where their contracts say so.
 The current **universal containment** contracts are:
@@ -57,7 +64,7 @@ The current **universal containment** contracts are:
 | `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
 | `Interval` | `add`, `meet`, `join`, `div_const` |
 | `ReducedProduct` | `reduce`, `add` |
-| `StridedInterval` | `join` (sound, not exact in the mismatched-stride case -- see below) |
+| `StridedInterval<W>` | `leq`, `join`, `meet`, `widen` -- all sound; precision caveats below |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
@@ -72,17 +79,43 @@ Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
 
-`StridedInterval`: `wf`, `bottom`/`top`/`singleton` produce wf values with
-the concretization the project-wide semantics require (`top_has`,
-`singleton_exact`), and `normalize` preserves concretization exactly
-(`self.has(x) == r.has(x)`, not just "no values lost"). `join` has a
-universal containment contract (`self.has(x) ==> r.has(x)` and
-`t.has(x) ==> r.has(x)`), but it is intentionally not tight: it is exact
-when both operands share a nonzero stride and residue class, or are two
-distinct singletons, and otherwise falls back to `top()` rather than
-guessing. Tightening the mismatched-stride case needs gcd, which is
-Yuting's shared helper and hasn't landed yet -- SI-W5-01's acceptance
-criterion is soundness ("join contains both operands"), not precision, so
-this is not a gap to close before the general meet/CRT work in Week 6-7.
-Meet, arithmetic transfers, and `ReducedProduct` integration are still
-open (Weeks 6-7 per the Task 1 plan).
+`StridedInterval<W>` (`src/strided.rs`) is the first domain in this crate
+ported onto the shared `Domain`/`Word`/`lattice::BotOr` interface fixed by
+`doc/domain-traits.md` (added in #116); `Interval<W>` and `IntervalZ`
+(`interval.rs`, `interval_z.rs`) are the reference ports the interface was
+designed against. Until every domain is migrated, the crate has two
+coexisting shapes for machine-word domains: the legacy per-width macro
+stamping in `domains.rs` (`ExecTnum`, `ExecAnum`, `ExecUnum`, the old
+`Interval`, `ReducedProduct`) and the new generic-over-`W` shape. The two
+are independent; nothing here claims anything about the legacy macro
+types' status beyond what the Layer table already says.
+
+`wf` is canonical: `stride == 0 <==> lo == hi`, and when `stride > 0`,
+`(hi - lo) % stride == 0`. Unlike the pre-port representation, `(0,7,7)`,
+`(2,7,7)`, and `(5,7,7)` are no longer three legal encodings of `{7}` --
+only `(0,7,7)` is well-formed, and `lemma_canonical` proves that any two
+wf values with the same concretization are the same value. `leq`, `join`,
+`meet`, and `widen` are all proved sound against `gamma`, with two
+deliberate precision gaps, neither of which is a soundness bug:
+
+- When both operands share a nonzero stride and residue class, `meet` is
+  exact (intersecting two progressions on the same grid can only shrink
+  the range, never add points), but the analogous `join` is **not** --
+  widening the range can span a gap neither operand covers. `join(si(3,
+  2,8), si(3,14,17))` claims `11`, which is in neither operand
+  (`strided_join_same_residue_is_not_always_exact` in
+  `tests/domain_traits.rs` pins this down after "the same-stride join is
+  exact" was flagged as a misleading claim in review). Two distinct
+  singletons are the one `join` case that *is* exact, since a two-point
+  set has no representable "gap". Mismatched strides fall back to
+  keeping the bounds with `stride = 1` rather than the unbounded `top()`
+  the pre-port `join` used.
+- `widen` only recognizes the already-stable case (`o.leq(self)`) and
+  otherwise jumps straight to `top()`. The usual Cousot move of jumping
+  an unstable bound to 0/MAX would generally land off the stride grid and
+  violate canonical `wf`; doing that correctly needs the same gcd
+  machinery `meet` does.
+
+Both gaps have the same root cause: computing a tight common stride needs
+gcd, which is Yuting's shared Congruence helper and hasn't landed yet.
+Arithmetic transfers and reduction into a `Product` are still open.
