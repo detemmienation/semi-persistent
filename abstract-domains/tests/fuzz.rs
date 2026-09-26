@@ -208,7 +208,7 @@ impl StridedInterval {
         match self {
             StridedInterval::Bottom => false,
             StridedInterval::Value { stride, lo, hi } => {
-                *lo <= x && x <= *hi && (*stride == 0 || (x - lo) % stride == 0)
+                *lo <= x && x <= *hi && (*stride == 0 || (x - lo).is_multiple_of(*stride))
             }
         }
     }
@@ -259,7 +259,7 @@ impl StridedInterval {
             StridedInterval::Bottom => return *self,
             StridedInterval::Value { stride, lo, hi } => (*stride, *lo, *hi),
         };
-        let abs_diff = if l1 >= l2 { l1 - l2 } else { l2 - l1 };
+        let abs_diff = l1.abs_diff(l2);
         if s1 == s2 && s1 != 0 && abs_diff % s1 == 0 {
             let lo = l1.min(l2);
             let hi = h1.max(h2);
@@ -331,7 +331,7 @@ fn rand_strided(rng: &mut impl Rng) -> StridedInterval {
         _ => {
             let lo: u64 = rng.random();
             let span: u64 = rng.random::<u64>() % 64;
-            let hi = lo.checked_add(span).unwrap_or(u64::MAX);
+            let hi = lo.saturating_add(span);
             let stride = 1 + (rng.random::<u64>() % 8);
             StridedInterval::Value { stride, lo, hi }
         }
