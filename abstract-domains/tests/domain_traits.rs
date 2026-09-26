@@ -8,10 +8,12 @@ use semi_persistent_abstract_domains::interval::Interval;
 use semi_persistent_abstract_domains::interval_z::{Hi, IntervalZ, Lo};
 use semi_persistent_abstract_domains::lattice::{BotOr, Domain};
 use semi_persistent_abstract_domains::semantics::{Euclid, Unsigned};
+use semi_persistent_abstract_domains::strided::StridedInterval;
 use semi_persistent_abstract_domains::transfer::{Arith, DivRem, DivZero};
 
 type I8 = Interval<u8>;
 type U = Unsigned<u8>;
+type SI8 = StridedInterval<u8>;
 
 fn iv(lo: u8, hi: u8) -> I8 {
     Interval::new(lo, hi).expect("lo <= hi")
@@ -175,4 +177,118 @@ fn interval_z_lattice_and_arith() {
             }
         }
     }
+}
+
+fn si(stride: u8, lo: u8, hi: u8) -> SI8 {
+    SI8::new(stride, lo, hi).expect("lo <= hi")
+}
+
+fn has_si(s: &SI8, x: u8) -> bool {
+    s.contains(x)
+}
+
+fn bot_has_si(b: &BotOr<SI8>, x: u8) -> bool {
+    match b {
+        BotOr::Bot => false,
+        BotOr::Val(v) => has_si(v, x),
+    }
+}
+
+/// `lo`/`hi` on a coarse grid plus the extremes, crossed with a handful of
+/// strides -- including 0 and non-dividing strides, so `new` has to
+/// exercise its own canonicalization (e.g. `si(5, 7, 7)` collapsing to the
+/// same value as `si(0, 7, 7)`) rather than only ever seeing pre-canonical
+/// input.
+fn strided_samples() -> Vec<SI8> {
+    let pts: Vec<u8> = (0..=255u16)
+        .step_by(51)
+        .map(|v| v as u8)
+        .chain([1, 2, 254, 255])
+        .collect();
+    let strides = [0u8, 1, 2, 3, 5];
+    let mut out = Vec::new();
+    for &lo in &pts {
+        for &hi in &pts {
+            if lo <= hi {
+                for &s in &strides {
+                    out.push(si(s, lo, hi));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn strided_interval_lattice_and_canonicity() {
+    let s = strided_samples();
+    for a in &s {
+        for b in &s {
+            let j = a.join(b);
+            let w = a.widen(b);
+            let m = a.meet(b);
+            for x in 0..=255u8 {
+                let in_a = has_si(a, x);
+                let in_b = has_si(b, x);
+                if in_a || in_b {
+                    assert!(has_si(&j, x) && has_si(&w, x));
+                }
+                if in_a && in_b {
+                    assert!(bot_has_si(&m, x));
+                }
+                if a.leq(b) && in_a {
+                    assert!(in_b);
+                }
+            }
+            if matches!(m, BotOr::Bot) {
+                assert!((0..=255u8).all(|x| !(has_si(a, x) && has_si(b, x))));
+            }
+            // Canonical: equal concretizations are equal (stride, lo, hi).
+            if (0..=255u8).all(|x| has_si(a, x) == has_si(b, x)) {
+                assert_eq!(a.bounds(), b.bounds());
+            }
+        }
+    }
+}
+
+/// The review's exact example: (0,7,7), (2,7,7) and (5,7,7) all denote
+/// {7}. Canonical wf means they are now literally the same value, not
+/// just equal under some separate normalize() step.
+#[test]
+fn strided_canonical_form_is_unique() {
+    let a = si(0, 7, 7);
+    let b = si(2, 7, 7);
+    let c = si(5, 7, 7);
+    assert_eq!(a.bounds(), b.bounds());
+    assert_eq!(b.bounds(), c.bounds());
+}
+
+/// Same stride, compatible residue: join is exact, just widens the bounds.
+#[test]
+fn strided_join_same_residue_is_exact() {
+    let a = si(3, 2, 8); // {2, 5, 8}
+    let b = si(3, 11, 14); // {11, 14}, 11 == 2 (mod 3)
+    assert_eq!(a.join(&b).bounds(), (3, 2, 14));
+}
+
+/// Two distinct singletons: the two-point set is exactly representable as
+/// a stride equal to the gap between them.
+#[test]
+fn strided_join_two_singletons_is_exact() {
+    let a = si(0, 4, 4);
+    let b = si(0, 10, 10);
+    assert_eq!(a.join(&b).bounds(), (6, 4, 10));
+}
+
+/// Incompatible strides fall back to a sound but imprecise join -- this
+/// keeps the bounds (unlike the pre-port join, which dropped them and
+/// returned unbounded top()), because there is no gcd helper yet to
+/// compute the tight common stride.
+#[test]
+fn strided_join_incompatible_strides_keeps_bounds() {
+    let a = si(3, 0, 9);
+    let b = si(5, 0, 20);
+    let j = a.join(&b);
+    let (stride, lo, hi) = j.bounds();
+    assert_eq!((stride, lo, hi), (1, 0, 20));
 }
