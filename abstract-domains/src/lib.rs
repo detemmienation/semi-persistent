@@ -22,6 +22,7 @@
 pub mod anum;
 pub mod bools;
 pub mod chopped;
+pub mod congruence;
 pub mod demo;
 pub mod div;
 pub mod domains;
