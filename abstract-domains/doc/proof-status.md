@@ -1,17 +1,13 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-09-26.
+Last refreshed: 2026-09-29.
 
-## Last verified #106 baseline (before the #112 transplant)
+## Current result
 
 ```text
 cargo verus verify
-1128 verified, 0 errors
+1210 verified, 0 errors
 ```
-
-The old #112 branch recorded 1254 verified, 0 errors before migration.
-Neither count is a verification result for the transplanted #112 tree;
-verification of that tree is pending.
 
 The project source contains no executable `admit()` or `assume()` calls. CI
 enforces that policy with a source scan and runs ordinary Verus verification.
@@ -42,19 +38,21 @@ Those tests mirror the Verus definitions and provide randomized/exhaustive
 finite evidence. They are not an independent proof that a separate executable
 implementation corresponds to the verified definitions.
 
-The CRT suite calls the actual executable helpers and contains 4 tests,
-one for each enabled width:
+The CRT/helper suite calls the real shared `arithmetic` implementation:
 
 ```text
-cargo test -p semi-persistent-abstract-domains --test crt
+cargo test --test crt
 ```
 
-It covers normalized inputs, compatible and incompatible constraints, and LCM
-overflow with a representable solution (including `MAX`) or no representable
-solution. The old #112 branch recorded passing results for 38 mirror tests
-and 4 CRT tests. The new #106 base replaces six Congruence mirror tests with
-4 real implementation tests; the mirror suite now contains 32 tests.
-The transplanted tree has not yet been retested.
+Its 8 tests cover all four word widths, GCD/Bézout properties, widened
+arithmetic and exact finite CRT outcomes. The exhaustive u8 oracle precomputes
+each input class by testing all 256 concrete values, then compares bitset
+intersections against the helper for all 532,701,120 unordered pairs of the
+32,640 normalized positive-modulus descriptions (including duplicate finite
+singleton encodings). Separate checks exercise every raw u8 residue with six
+partner classes in both operand orders. The focused target takes about 40
+seconds in the local debug build; it does not require an ignored/release-only
+test or a mirror implementation.
 
 ## Layer status
 
@@ -64,7 +62,7 @@ The transplanted tree has not yet been retested.
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
 | L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval`, `ReducedProduct` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
-| L4 | Shared GCD/CRT helpers | transplanted from #112; exact CRT and overflow contracts previously verified at all four enabled widths; revalidation pending |
+| L4 | Shared GCD/CRT helpers | shared mathematical proofs, deterministic GCD, Bézout, generic exact finite CRT and widened helpers verified |
 | L4 | `Congruence<W>` | generic unsigned semantics, canonical normalization, nonemptiness and canonicality proved; full `Domain` implementation deferred to the later lattice PR |
 
 All enabled L4 results are proved well formed where their contracts say so.
@@ -93,29 +91,49 @@ L4 soundness work.
 
 ### Shared arithmetic helpers
 
-The helpers remain inside `abstract_domain!` in `domains.rs` for use by
-Congruence and future Strided Interval operations.
+`src/arithmetic.rs` owns the shared foundation; the width-independent `int`/
+`nat` proofs are no longer instantiated by `abstract_domain!`. `Word` supplies
+lossless `to_u64` and `from_u64` bridges (the latter requires an in-range
+input) and proves its modulus is at most 2^64. The generic APIs support u8/u16/u32/u64. A single
+private u64/i128/u128 engine retains the verified extended-Euclidean and CRT
+calculations without repeating them for each width.
 
-- `gcd` proves `is_gcd`, including `gcd(0, 0) = 0`, using the Euclidean-step lemma.
-- `extended_gcd` proves the GCD, Bézout identity, and coefficient bounds.
-- `crt_compatible` checks residue compatibility modulo the GCD. Supporting
-  lemmas prove that common solutions imply compatibility and incompatible
-  constraints have no common integer solution.
-- `checked_lcm` returns the exact LCM when it fits in `$uint`; `None` proves
-  that the exact LCM exceeds the width's maximum. Both inputs must be positive.
-- `crt_merge` accepts positive moduli and normalizes the input residues.
-  Its result distinguishes the following cases:
+- `gcd_spec` is deterministic and recursive, decreasing on the second operand.
+  `gcd<W>` and `gcd_wide` return exactly this specification. Shared proofs
+  establish divisibility of both inputs, Euclidean-step correctness, uniqueness,
+  divisibility maximality, symmetry and associativity, including zero inputs.
+- `extended_gcd<W>` returns the named `ExtendedGcd<W> { gcd, x, y }`. It proves
+  equality with `gcd_spec`, Bézout's identity, and the original coefficient bounds.
+  Its private recursive engine retains the explicit decreasing argument.
+- `crt_merge<W>` requires **positive moduli** and accepts unreduced residues.
+  Its `wf` and `has` contracts exactly describe all representable common
+  solutions. The u128 engine preserves integer CRT exactness and computes
+  the exact LCM and least nonnegative common solution before classification.
 
-| Result | Verified guarantee |
+| Result | Verified finite-word meaning |
 | --- | --- |
-| `Merged { modulus, residue }` | The modulus is the exact LCM, the residue is canonical, and the class represents exactly all common integer solutions. |
-| `Incompatible` | There is no common integer solution. |
-| `ModulusOverflow { wide_residue }` | The inputs are compatible and the exact LCM exceeds `MAX`. The canonical common residue is computed in `u128`; a representable value is a common solution exactly when it equals `wide_residue`. |
+| `Class { modulus, residue }` | `0 < modulus`, `residue < modulus`, and `residue + modulus < W::modulus()`; the class contains at least two words and is exactly the intersection. |
+| `Singleton { value }` | Exactly one representable common solution, whether the LCM overflows the word or merely cannot reach a second member from the residue. |
+| `Empty` | No representable common solution, including incompatible constraints and compatible classes whose least solution exceeds `MAX`. |
 
-In the overflow case, `wide_residue <= MAX` identifies the unique representable
-solution; otherwise the representable intersection is empty. The executable
-arithmetic is verified to avoid overflow. These helpers handle regular modular
-constraints only; Singleton, Bottom, and interval bounds belong to callers.
+Callers no longer inspect a widened residue or reconstruct overflow cases.
+Congruence's modulus-zero constants must be handled **before** calling CRT.
+No conversion into `BotOr<Congruence<W>>` or Congruence meet is implemented here.
+The unused `crt_compatible` and `checked_lcm` executables were removed after
+checking callers; their necessary mathematical facts remain shared. There are
+no existential GCD result specifications or `#![auto]` shortcuts in this module.
+Unrelated pre-existing domain proofs retain their existing annotations.
+
+`gcd_machine_modulus<W>` computes `gcd(m, 2^N)` in u128, including `m = 0` and
+`N = 64`. `lemma_wrapping_congruence` proves that reduction modulo 2^N preserves
+congruence modulo this GCD, for negative as well as nonnegative integers.
+`mul_wide` and `granger_modulus` compute exact widened products and
+`gcd(gcd(m1*m2, m1*r2), m2*r1)`. They provide the requested shared foundation;
+no Congruence multiplication or other transfer operation is implemented.
+
+PR #112 depends on updated #106 (`732f6db`). Congruence's `Domain` implementation,
+refinement, join, meet, widen and arithmetic transfers remain deferred to #114
+or later. No proof bypasses or new trusted items were introduced.
 
 ### Congruence
 
@@ -153,8 +171,8 @@ proof bypasses or changes to the trust boundary.
 
 PR #106 deliberately does **not** implement `Domain`: the current trait also
 requires `leq`, `join`, `meet`, and `widen`. Those belong to #114; shared
-GCD/extended-GCD/CRT helpers belong to #112. This PR adds neither those
-operations nor arithmetic transfers. Congruence has no internal bottom;
+GCD/extended-GCD/CRT helpers are supplied by #112 as described above. Neither
+PR implements those Congruence operations or arithmetic transfers. Congruence has no internal bottom;
 future empty results will use the existing external `BotOr` architecture.
 
 `cargo test --test congruence` passes 4 tests against the real implementation.
@@ -164,7 +182,7 @@ representation of all 16,640 distinct sets. Other cases cover constant/top,
 singleton collapse, second-member boundaries, all four word widths and legacy
 aliases. The old six Congruence mirror tests were replaced by this target.
 
-The #106 baseline `cargo test` passed 39 integration tests: 4 Congruence, 3 reference-domain,
-and 32 mirror tests (0 failures; 1 unrelated doctest ignored).
-The #106 baseline verification count above uses the repository-pinned Verus
+`cargo test` passes 47 integration tests: 8 CRT/helper, 4 Congruence,
+3 reference-domain and 32 mirror tests (0 failures; 1 unrelated doctest ignored).
+The verification count above uses the repository-pinned Verus
 `0.2026.09.20.aef82ed`, matching the pinned `vstd` dependency.

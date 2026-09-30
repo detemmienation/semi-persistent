@@ -27,6 +27,7 @@ pub trait Word: Sized + Copy {
     proof fn lemma_modulus()
         ensures
             Self::modulus() >= 256,
+            Self::modulus() <= 0x1_0000_0000_0000_0000nat,
             Self::modulus() % 2 == 0,
     ;
 
@@ -113,6 +114,16 @@ pub trait Word: Sized + Copy {
             o.view() != 0,
         ensures
             r.view() == self.view() % o.view(),
+    ;
+
+    /// Lossless bridge to shared widened arithmetic (supported widths <= 64).
+    fn to_u64(self) -> (r: u64)
+        ensures r as nat == self.view(),
+    ;
+
+    fn from_u64(value: u64) -> (r: Self)
+        requires value < Self::modulus(),
+        ensures r.view() == value as nat,
     ;
 }
 
@@ -206,6 +217,14 @@ macro_rules! impl_word {
 
                 fn urem(self, o: Self) -> (r: Self) {
                     self % o
+                }
+
+                fn to_u64(self) -> (r: u64) {
+                    self as u64
+                }
+
+                fn from_u64(value: u64) -> (r: Self) {
+                    value as $t
                 }
             }
         }
