@@ -1284,7 +1284,7 @@ macro_rules! abstract_domain {
                     Interval { lo: self.lo / d, hi: self.hi / d }
                 }
             }
-            
+
             // ============================================================
             // ReducedProduct: Tnum x Anum x Interval x Unum reduced product
             // ============================================================
