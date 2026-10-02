@@ -64,7 +64,7 @@ The current **universal containment** contracts are:
 | `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
 | `Interval` | `add`, `meet`, `join`, `div_const` |
 | `ReducedProduct` | `reduce`, `add` |
-| `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`; precision caveats below |
+| `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`, `Arith<Unsigned<W>>` (`add`, `sub`, `neg`); precision caveats below |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
@@ -127,7 +127,17 @@ which is a soundness bug:
   reaches `(4,0,252)`, and one decreasing iteration gives `(4,0,200)`
   (`strided_widen_keeps_the_stride`).
 
+- `Arith<Unsigned<W>>`: `add` and `sub` use a common grid of the two
+  strides (an operand's stride when it divides the other, else 1) and
+  shift the bounds. They are exact when the operands share a grid and no
+  result wraps or every result wraps; when only some results wrap they
+  return Top. `neg` is exact when 0 is not in the set; otherwise it joins
+  `{0}` with the exact negation of the rest. Signedness lives in the
+  semantics, so `Arith<Signed<W>>` on the same carrier is still open.
+
 The tight join stride is `gcd(s1, s2, |lo1 - lo2|)` (Balakrishnan &
-Reps), and the exact meet for non-dividing strides needs CRT. Both come
+Reps), and the same gcd gives the tight `add`/`sub` stride; the exact
+meet for non-dividing strides needs CRT. Both come
 from the `gcd`/`crt_merge` helpers in #112, which has not landed yet.
-Arithmetic transfers and reduction into a `Product` are still open.
+`DivRem`, bitwise operations, shifts, casts, comparisons, and reduction into a
+`Product` are still open.
