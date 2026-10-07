@@ -1286,6 +1286,11 @@ macro_rules! abstract_domain {
             }
 
             // ============================================================
+            // Congruence
+            // ============================================================
+            pub type Congruence = crate::congruence::Congruence<$uint>;
+
+            // ============================================================
             // ReducedProduct: Tnum x Anum x Interval x Unum reduced product
             // ============================================================
             #[derive(Clone, Copy)]

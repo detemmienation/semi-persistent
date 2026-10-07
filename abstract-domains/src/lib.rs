@@ -20,8 +20,10 @@
 //!   See doc/domain-traits.md.
 
 pub mod anum;
+pub mod arithmetic;
 pub mod bools;
 pub mod chopped;
+pub mod congruence;
 pub mod demo;
 pub mod div;
 pub mod domains;
