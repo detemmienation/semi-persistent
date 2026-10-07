@@ -40,7 +40,7 @@ the real executable code directly and brute-forces small (`u8`) instances
 against it -- no hand-written reimplementation to drift out of sync:
 
 ```text
-cargo test -p semi-persistent-abstract-domains --test domain_traits   # 9 tests
+cargo test -p semi-persistent-abstract-domains --test domain_traits
 ```
 
 ## Layer status
@@ -76,12 +76,11 @@ Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
 
-`StridedInterval<W>` (`src/strided.rs`) is the first domain in this crate
-ported onto the shared `Domain`/`Word`/`lattice::BotOr` interface fixed by
-`doc/domain-traits.md` (added in #116); `Interval<W>` and `IntervalZ`
-(`interval.rs`, `interval_z.rs`) are the reference ports the interface was
-designed against. Until every domain is migrated, the crate has two
-coexisting shapes for machine-word domains: the legacy per-width macro
+`StridedInterval<W>` (`src/strided.rs`) is ported onto the shared
+`Domain`/`Word`/`lattice::BotOr` interface fixed by `doc/domain-traits.md`
+(added in #116), whose reference ports are `Interval<W>` and `IntervalZ`
+(`interval.rs`, `interval_z.rs`). Until every domain is migrated, the crate
+has two coexisting shapes for machine-word domains: the legacy per-width macro
 stamping in `domains.rs` (`ExecTnum`, `ExecAnum`, `ExecUnum`, the old
 `Interval`, `ReducedProduct`) and the new generic-over-`W` shape. The two
 are independent; nothing here claims anything about the legacy macro
@@ -102,7 +101,7 @@ which is a soundness bug:
   contains the intersection. It is exact (and `Bot` exactly when the
   intersection is empty) when one operand is a singleton or one stride
   divides the other, which includes `meet(top(), x) == x`; the tests
-  check this exhaustively on the u8 samples. When neither stride divides
+  check this on a sample of u8 values. When neither stride divides
   the other, `meet` clips the larger-stride operand to the common bounds,
   which may keep points off the other grid and may return a value for an
   empty intersection. `meet` is commutative in all cases.
@@ -112,12 +111,11 @@ which is a soundness bug:
   2,8), si(3,14,17))` claims `11`, which is in neither operand
   (`strided_join_same_residue_is_not_always_exact` in
   `tests/domain_traits.rs` pins this down after "the same-stride join is
-  exact" was flagged as a misleading claim in review). Two distinct
-  singletons are the one `join` case that *is* exact, since a two-point
-  set has no representable "gap". Otherwise `join` keeps the bounds
-  `[min lo, max hi]` and uses an operand's stride when it divides the
-  other stride and the distance between the `lo`s (so `{4} ⊔ (2,0,10)` is
-  `(2,0,10)`), else stride 1.
+  exact" was flagged as a misleading claim in review). `join` is exact
+  in some cases, for example two distinct singletons (a two-point set has
+  no gap) and `{4} ⊔ (2,0,10) = (2,0,10)`. In general `join` keeps the
+  bounds `[min lo, max hi]` and uses an operand's stride when it divides
+  the other stride and the distance between the `lo`s, else stride 1.
 - `widen` keeps the join's stride and moves an unstable bound to the last
   grid point before the end of the range rather than to 0/MAX, which
   would usually be off the grid. On `i = 0; while i < 200 { i += 4 }` it
