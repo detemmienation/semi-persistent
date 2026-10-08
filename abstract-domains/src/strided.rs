@@ -943,31 +943,6 @@ impl<W: Word> Domain for StridedInterval<W> {
             == 0)
     }
 
-    proof fn lemma_nonempty(&self) {
-        self.lemma_contains_bounds();
-    }
-
-    proof fn lemma_canonical(a: &Self, b: &Self) {
-        a.lemma_contains_bounds();
-        b.lemma_contains_bounds();
-        assert(b.gamma(a.lo) && b.gamma(a.hi));
-        assert(a.gamma(b.lo) && a.gamma(b.hi));
-        // lo, hi agree: each side's own lo/hi is a member of the other side.
-        assert(a.lo.view() <= b.lo.view() && b.lo.view() <= a.lo.view());
-        assert(a.hi.view() <= b.hi.view() && b.hi.view() <= a.hi.view());
-        W::lemma_view_injective(a.lo, b.lo);
-        W::lemma_view_injective(a.hi, b.hi);
-        // strides agree.
-        if a.lo.view() == a.hi.view() {
-            // both singletons (stride == 0) since lo == hi forces it in wf.
-            W::lemma_view_injective(a.stride, b.stride);
-        } else {
-            Self::lemma_stride_le(a, b);
-            Self::lemma_stride_le(b, a);
-            W::lemma_view_injective(a.stride, b.stride);
-        }
-    }
-
     fn dup(&self) -> (r: Self) {
         StridedInterval { stride: self.stride, lo: self.lo, hi: self.hi }
     }
@@ -1221,6 +1196,33 @@ impl<W: Word> Domain for StridedInterval<W> {
             }
         }
         r
+    }
+}
+
+impl<W: Word> Canonical for StridedInterval<W> {
+    proof fn lemma_nonempty(&self) {
+        self.lemma_contains_bounds();
+    }
+
+    proof fn lemma_canonical(a: &Self, b: &Self) {
+        a.lemma_contains_bounds();
+        b.lemma_contains_bounds();
+        assert(b.gamma(a.lo) && b.gamma(a.hi));
+        assert(a.gamma(b.lo) && a.gamma(b.hi));
+        // lo, hi agree: each side's own lo/hi is a member of the other side.
+        assert(a.lo.view() <= b.lo.view() && b.lo.view() <= a.lo.view());
+        assert(a.hi.view() <= b.hi.view() && b.hi.view() <= a.hi.view());
+        W::lemma_view_injective(a.lo, b.lo);
+        W::lemma_view_injective(a.hi, b.hi);
+        // strides agree.
+        if a.lo.view() == a.hi.view() {
+            // both singletons (stride == 0) since lo == hi forces it in wf.
+            W::lemma_view_injective(a.stride, b.stride);
+        } else {
+            Self::lemma_stride_le(a, b);
+            Self::lemma_stride_le(b, a);
+            W::lemma_view_injective(a.stride, b.stride);
+        }
     }
 }
 

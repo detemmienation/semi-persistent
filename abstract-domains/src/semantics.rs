@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Concrete operation semantics that transfer-function contracts refer to.
 //!
-//! A `Semantics` names a value type `V` and the meaning of each operator on it.
+//! A `Semantics` names a value type `V` and the meaning of each operator on it
+//! (zero test, add, sub, neg, mul, div, rem) and of the order (lt, le).
 //! Transfer traits are indexed by a semantics (`DivRem<S>`), so one domain type
 //! can carry several semantics over the same carrier:
 //!
@@ -33,11 +34,19 @@ pub trait Semantics {
 
     spec fn neg(a: Self::V) -> Self::V;
 
+    spec fn mul(a: Self::V, b: Self::V) -> Self::V;
+
     /// Meaningful only for a nonzero divisor.
     spec fn div(a: Self::V, b: Self::V) -> Self::V;
 
     /// Meaningful only for a nonzero divisor.
     spec fn rem(a: Self::V, b: Self::V) -> Self::V;
+
+    /// Strict order: unsigned for `Unsigned<W>`, two's complement for
+    /// `Signed<W>`, the integer order for `Euclid` and `Trunc`.
+    spec fn lt(a: Self::V, b: Self::V) -> bool;
+
+    spec fn le(a: Self::V, b: Self::V) -> bool;
 }
 
 pub open spec fn iabs(a: int) -> int {
@@ -94,12 +103,24 @@ impl<W: Word> Semantics for Unsigned<W> {
         W::from_int(-(a.view() as int))
     }
 
+    open spec fn mul(a: W, b: W) -> W {
+        W::from_int(a.view() as int * b.view() as int)
+    }
+
     open spec fn div(a: W, b: W) -> W {
         W::from_int(a.view() as int / b.view() as int)
     }
 
     open spec fn rem(a: W, b: W) -> W {
         W::from_int(a.view() as int % b.view() as int)
+    }
+
+    open spec fn lt(a: W, b: W) -> bool {
+        a.view() < b.view()
+    }
+
+    open spec fn le(a: W, b: W) -> bool {
+        a.view() <= b.view()
     }
 }
 
@@ -129,6 +150,10 @@ impl<W: Word> Semantics for Signed<W> {
         W::from_int(-signed_view(a))
     }
 
+    open spec fn mul(a: W, b: W) -> W {
+        W::from_int(signed_view(a) * signed_view(b))
+    }
+
     /// Wraps on MIN / -1, as the two's-complement result does.
     open spec fn div(a: W, b: W) -> W {
         W::from_int(tdiv(signed_view(a), signed_view(b)))
@@ -136,6 +161,14 @@ impl<W: Word> Semantics for Signed<W> {
 
     open spec fn rem(a: W, b: W) -> W {
         W::from_int(trem(signed_view(a), signed_view(b)))
+    }
+
+    open spec fn lt(a: W, b: W) -> bool {
+        signed_view(a) < signed_view(b)
+    }
+
+    open spec fn le(a: W, b: W) -> bool {
+        signed_view(a) <= signed_view(b)
     }
 }
 
@@ -162,6 +195,10 @@ impl Semantics for Euclid {
         -a
     }
 
+    open spec fn mul(a: int, b: int) -> int {
+        a * b
+    }
+
     /// Verus `int` division is Euclidean: `0 <= a % b < |b|`.
     open spec fn div(a: int, b: int) -> int {
         a / b
@@ -169,6 +206,14 @@ impl Semantics for Euclid {
 
     open spec fn rem(a: int, b: int) -> int {
         a % b
+    }
+
+    open spec fn lt(a: int, b: int) -> bool {
+        a < b
+    }
+
+    open spec fn le(a: int, b: int) -> bool {
+        a <= b
     }
 }
 
@@ -195,12 +240,24 @@ impl Semantics for Trunc {
         -a
     }
 
+    open spec fn mul(a: int, b: int) -> int {
+        a * b
+    }
+
     open spec fn div(a: int, b: int) -> int {
         tdiv(a, b)
     }
 
     open spec fn rem(a: int, b: int) -> int {
         trem(a, b)
+    }
+
+    open spec fn lt(a: int, b: int) -> bool {
+        a < b
+    }
+
+    open spec fn le(a: int, b: int) -> bool {
+        a <= b
     }
 }
 

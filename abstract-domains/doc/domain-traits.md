@@ -14,7 +14,9 @@ two reference domains are `src/interval.rs` (machine words) and
    refinement, reduction, and division whose divisors are all zero. A domain
    has no `is_bottom` or `empty` flag and no `Bottom` variant.
 2. **Canonical representation.** `wf` admits exactly one value per
-   concretization, and every domain proves `lemma_canonical`. Structural
+   concretization, and every leaf domain proves `lemma_canonical` in its
+   `Canonical` impl. A `reduce::Product` is the exception: it is `Domain` but
+   not `Canonical` (doc/reduced-product.md, "Products are not canonical"). Structural
    equality is then set equality, so a fixpoint test cannot miss
    stabilization and a join cannot lose precision on an equivalent encoding.
    An enum with a payload per case is preferred over a flag next to fields
@@ -24,7 +26,7 @@ two reference domains are `src/interval.rs` (machine words) and
    A contract that restates the implementation (`ensures r == join_spec(..)`)
    does not count.
 4. **Machine domains store machine words.** They are generic over `W: Word`
-   (u8..u64), use no big integers, and have their own internal top. Big
+   (u8..u128), use no big integers, and have their own internal top. Big
    integers are used only by unbounded domains.
 5. **One carrier, several semantics.** A machine word is a bit pattern.
    Signed and unsigned are two semantics of the operators, not two domain
@@ -35,16 +37,18 @@ two reference domains are `src/interval.rs` (machine words) and
 ```rust
 pub trait Domain: Sized {
     type C;                                   // concrete values
-    spec fn wf(&self) -> bool;                // canonical invariant
+    spec fn wf(&self) -> bool;                // representation invariant
     spec fn gamma(&self, c: Self::C) -> bool;
-    proof fn lemma_nonempty(&self);           // bottomless
-    proof fn lemma_canonical(a: &Self, b: &Self); // same gamma ==> a == b
     fn dup(&self) -> Self;                    // no Copy bound: big numbers
     fn top() -> Self;
     fn leq(&self, o: &Self) -> bool;          // true ==> gamma inclusion
     fn join(&self, o: &Self) -> Self;         // any sound upper bound
     fn meet(&self, o: &Self) -> BotOr<Self>;  // Bot ==> disjoint
-    fn widen(&self, o: &Self) -> Self;        // sound upper bound
+    fn widen(&self, o: &Self) -> Self;        // covers self and o; see below
+}
+pub trait Canonical: Domain {
+    proof fn lemma_nonempty(&self);           // bottomless
+    proof fn lemma_canonical(a: &Self, b: &Self); // same gamma ==> a == b
 }
 pub enum BotOr<D> { Bot, Val(D) }
 ```
@@ -55,9 +59,17 @@ contracts.
 The contracts follow Verasco's `AdomLib.v` (`leb_correct`, `join_correct`,
 `meet_correct`, `widen_incr`). Join is not required to be least: wrapped
 intervals have no least upper bound (Navas et al. 2012; Gange et al. 2015).
-Widening is soundness only. As in Verasco, analysis termination comes from
-fuel (`CsharpminorIter.v`), and Jourdan's thesis notes that termination is not
-needed for soundness. A domain should still document its widening measure.
+**Widening.** In `self ∇ o`, `self` is the previous iterate and `o` the new
+one. Callers test stabilization with `leq` and call `widen` only when `o`
+escapes `self`, so `widen` need not detect the fixpoint itself. The contract
+asks only that the result cover both arguments, which `join` satisfies; going
+beyond `o` is permitted, not required, because requiring it means fixing a
+termination measure, and that measure differs per domain. As in Verasco,
+analysis termination comes from fuel (`CsharpminorIter.v`), and Jourdan's
+thesis notes that termination is not needed for soundness. A domain with long
+ascending chains should still go beyond `o` on the unstable bounds (to the end
+of the range for intervals, doubling the arc for wrapped intervals, to the
+next threshold) and document the measure it uses.
 
 ## 3. Words (`word.rs`)
 
@@ -65,11 +77,23 @@ needed for soundness. A domain should still document its widening measure.
 
 - **Spec side:** `view() -> nat`, `modulus()`, `from_int(i) = i mod 2^N`, and
   lemmas for bounds, injectivity and `from_int`.
-- **Exec side:** `zero`, `one`, `max`, comparisons, `checked_add`,
-  `checked_sub`, `neg_nonzero`, `udiv`, `urem`.
+- **Spec side:** also `bits()`, with `modulus() == pow2(bits())`.
+- **Exec side:** `zero`, `one`, `max`, `half`, `bit_width`, comparisons,
+  `checked_add`, `checked_sub`, `checked_mul`, `wrapping_add`, `wrapping_sub`,
+  `neg_nonzero`, `udiv`, `urem`, `trailing_zeros` (the 2-adic valuation,
+  stated as `tz_spec`: `x = q * 2^t` with `q` odd) and `mulmod`.
 
-`impl_word!` discharges the obligations once per width. `signed_view` is the
-two's-complement reading.
+`impl_word!` discharges the obligations once per width, for u8, u16, u32, u64
+and u128. `signed_view` is the two's-complement reading.
+
+**No wider type.** No operation needs an integer wider than `W`: products are
+either checked (`checked_mul`) or reduced (`mulmod`), and a gcd with 2^N is
+`2^min(trailing_zeros(m), bits)`. This is what makes u128 a `Word`. Up to u64,
+`mulmod` multiplies in the next native type; for u128 it multiplies natively
+when `m < 2^64` and otherwise doubles and adds over the bits of the second
+operand, keeping every intermediate value below `m` (about 460 ns on an M4 Pro,
+against 13 ns for u64). vstd specifies `trailing_zeros` up to u64; the u128
+version splits the word into two u64 halves.
 
 Width-specific facts go in the trait as lemmas proved in `impl_word!`. They are
 not re-proved inside domain code. Domains that need `by (bit_vector)`
@@ -80,7 +104,7 @@ pattern being replaced.
 ## 4. Semantics (`semantics.rs`)
 
 A `Semantics` names a value type `V` and gives the spec meaning of `zero`,
-`is_zero`, `add`, `sub`, `neg`, `div` and `rem`.
+`is_zero`, `add`, `sub`, `neg`, `mul`, `div` and `rem`.
 
 | marker        | `V`   | arithmetic | division |
 |---------------|-------|------------|----------|
@@ -102,6 +126,7 @@ implements it once per semantics it supports.
 
 - `Arith<S>`: `add`, `sub`, `neg`. Their contract is
   `gamma(x) ∧ gamma'(y) ⟹ r.gamma(S::add(x, y))`.
+- `Mul<S>`: `mul`, with the same contract shape.
 - `DivRem<S>`: `contains_zero`, `div`, `rem`. Division returns
   `(BotOr<Self>, DivZero)`, with `DivZero::{Never, Maybe, Always}`:
   - the value covers every quotient by a **nonzero** divisor;
@@ -119,18 +144,25 @@ Planned next, with the same shape:
 - `Bitwise`.
 - `Shift<S>`.
 - `Cast`: truncation, zero extension and sign extension between widths.
-- `Product<A, B>` with `reduce -> BotOr`.
+- `Product<A, B>` with `reduce -> BotOr`: done in `reduce.rs`, see
+  doc/reduced-product.md.
 
 ## 6. Reference domains
 
 **`Interval<W>`** (`interval.rs`) has private `lo`/`hi` with `lo <= hi`;
 `new` returns `None` otherwise. It implements:
 
-- `Domain`, with a proved `lemma_canonical`;
+- `Domain` and `Canonical`, with a proved `lemma_canonical`, and an exact
+  `meet_exact`;
 - Cousot widening;
-- `Arith<Unsigned<W>>`: exact when nothing wraps, top otherwise;
-- `DivRem<Unsigned<W>>`: precise division `[lo / d.hi, hi / d.lo']` and
-  remainder `[0, min(hi, d.hi - 1)]`;
+- `Arith<Unsigned<W>>`: add and sub exact when no result wraps or every
+  result wraps once, top otherwise;
+- `Mul<Unsigned<W>>`: `[lo * o.lo, hi * o.hi]` when no product wraps, top
+  otherwise;
+- `DivRem<Unsigned<W>>`: precise division `[lo / d.hi, hi / d.lo']`;
+  remainder `[lo - q * d.hi, min(hi - q * d.lo', d.hi - 1)]` when every
+  quotient is the same `q` (which makes it exact on singletons and the
+  identity when `hi < d.lo`), `[0, min(hi, d.hi - 1)]` otherwise;
 - `DivRem<Signed<W>>`: sound placeholder (top plus the exact zero flag).
 
 **`IntervalZ`** (`interval_z.rs`) has `enum Lo { NegInf, Fin(IBig) }` and
@@ -138,7 +170,7 @@ Planned next, with the same shape:
 finite. It has an internal top `[-inf, +inf]`, so it needs no Verasco `t+⊤`
 lift. It implements:
 
-- `Domain` with Cousot widening;
+- `Domain` and `Canonical`, with Cousot widening and an exact `meet_exact`;
 - `Arith<Euclid>` and `Arith<Trunc>`, both exact;
 - `DivRem<Euclid>` and `DivRem<Trunc>` as sound placeholders (top plus the
   exact zero flag).
@@ -164,7 +196,7 @@ it can claim injectivity. Un-normalized rationals falsify it.
 ## 8. Porting checklist
 
 - [ ] Payload struct or enum with no bottom flag and no `Bottom` variant. Empty results are `BotOr::Bot`.
-- [ ] `wf` is canonical and `lemma_canonical` is proved. Enumerate small widths to confirm there is one value per set.
+- [ ] `wf` is canonical and `lemma_canonical` is proved in `impl Canonical`. Enumerate small widths to confirm there is one value per set.
 - [ ] Fields are private, and constructors establish `wf`.
 - [ ] Generic over `W: Word`, one instance per width (not per signedness). No `IBig` in a machine domain.
 - [ ] `impl Domain`, with `top`, `leq`, `join`, `meet -> BotOr` and `widen` stated against `gamma`.

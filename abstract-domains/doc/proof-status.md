@@ -1,10 +1,12 @@
 # Abstract Domains Proof Status
 
-Last refreshed: 2026-09-27.
+Last refreshed: 2026-10-01.
 
 ## Current result
 
-`cargo verus verify` reports 0 errors.
+`cargo verus verify` reports 0 errors; CI runs it on every pull request. This
+file does not record the number of verified items, because every change to the
+crate moves it.
 
 The project source contains no executable `admit()` or `assume()` calls. CI
 enforces that policy with a source scan and runs ordinary Verus verification.
@@ -48,7 +50,7 @@ cargo test -p semi-persistent-abstract-domains --test domain_traits
 | L1 | bit primitives and infinite-bitstring natural operations | proved |
 | L2 | Tnum, Anum, Unum, and division theory | proved |
 | L3 | chopped bounded-width domains | every stated contract verifies; containment covers the explicit operation inventory in `design.md`, not every defined operation |
-| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval`, `ReducedProduct` at four enabled widths (macro-stamped, `domains.rs`) | every method verifies its stated contract; containment scope is listed below |
+| L4 | `ExecTnum`, `ExecAnum`, `ExecUnum`, `Interval` at four enabled widths | every method verifies its stated contract; containment scope is listed below |
 | L4 | `StridedInterval<W>` (`strided.rs`), ported onto the shared `Domain`/`Word` traits from `doc/domain-traits.md` | `wf` is canonical (`lemma_canonical` proved); `leq`/`join`/`meet`/`widen` implemented; not yet in a `Product` |
 
 All enabled L4 results are proved well formed where their contracts say so.
@@ -60,18 +62,16 @@ The current **universal containment** contracts are:
 | `ExecAnum` | `add`, `div_const` |
 | `ExecUnum` | `top`, `add`, `from_interval`, `mul` |
 | `Interval` | `add`, `meet`, `join`, `div_const` |
-| `ReducedProduct` | `reduce`, `add` |
 | `StridedInterval<W>` | `new`, `constant`, `leq` (sound and complete), `join`, `meet`, `widen`; precision caveats below |
 
 The `ExecUnum` proofs use native/spec bridge lemmas, the L3 `ChoppedUnum`
 soundness theorems, explicit overflow-to-top cases, and interval-to-Unum range
-lemmas. `ReducedProduct::add` composes the four component containment
-postconditions and then applies the proved containment of `reduce`.
+lemmas. #123 removed `ReducedProduct`, whose `reduce` and `add` carried
+containment theorems; `reduce::Product` replaces it.
 
 Other executable methods currently prove well-formedness only. In particular,
 this includes Tnum multiplication, shifts, negation and subtraction, most
-Unum conversions/arithmetic helpers, and ReducedProduct bitwise operations,
-subtraction, multiplication, division, shifts, joins, meets, and negation.
+and Unum conversions/arithmetic helpers.
 Their implementations and finite mirror tests are evidence, but not universal
 containment theorems. Adding those postconditions and proofs is the remaining
 L4 soundness work.
@@ -82,7 +82,7 @@ L4 soundness work.
 (`interval.rs`, `interval_z.rs`). Until every domain is migrated, the crate
 has two coexisting shapes for machine-word domains: the legacy per-width macro
 stamping in `domains.rs` (`ExecTnum`, `ExecAnum`, `ExecUnum`, the old
-`Interval`, `ReducedProduct`) and the new generic-over-`W` shape. The two
+`Interval`) and the new generic-over-`W` shape. The two
 are independent; nothing here claims anything about the legacy macro
 types' status beyond what the Layer table already says.
 
