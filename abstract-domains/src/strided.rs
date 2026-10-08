@@ -810,6 +810,22 @@ impl<W: Word> StridedInterval<W> {
             }
             return BotOr::Bot;
         }
+        if h.eq(a.hi) {
+            // `a.hi` is already on the grid, so no `urem` is needed to snap it.
+            let m = if lo.eq(h) {
+                StridedInterval { stride: W::zero(), lo, hi: h }
+            } else {
+                StridedInterval { stride: s, lo, hi: h }
+            };
+            proof {
+                a.lemma_contains_bounds();
+                assert((h.view() as int - lo.view() as int) % (s.view() as int) == 0);
+                assert forall|c: W|
+                    a.gamma(c) && l.view() <= c.view() && c.view() <= h.view() implies #[trigger]
+                    m.gamma(c) by {}
+            }
+            return BotOr::Val(m);
+        }
         let m = Self::mk(s, lo, h);
         proof {
             assert forall|c: W|
@@ -1156,7 +1172,8 @@ impl<W: Word> Domain for StridedInterval<W> {
         } else {
             j.lo
         };
-        let hi = if self.hi.lt(j.hi) {
+        let hi_unstable = self.hi.lt(j.hi);
+        let hi = if hi_unstable {
             W::max()
         } else {
             j.hi
@@ -1181,7 +1198,19 @@ impl<W: Word> Domain for StridedInterval<W> {
             assert(lo.view() <= j.lo.view());
             j.hi.lemma_view_bounded();
         }
-        let r = Self::mk(s, lo, hi);
+        // Only `W::max()` can be off the grid; a stable `j.hi` is already on it.
+        let r = if hi_unstable {
+            Self::mk(s, lo, hi)
+        } else {
+            proof {
+                Self::lemma_mod_zero_sum(
+                    j.hi.view() as int - j.lo.view() as int,
+                    j.lo.view() as int - lo.view() as int,
+                    s.view() as int,
+                );
+            }
+            StridedInterval { stride: s, lo, hi }
+        };
         proof {
             assert forall|c: W| self.gamma(c) || o.gamma(c) implies #[trigger] r.gamma(c) by {
                 assert(j.gamma(c));

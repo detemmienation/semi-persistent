@@ -519,3 +519,22 @@ fn strided_constant_and_new_contract() {
     // stride 0 denotes {lo}, whatever hi is.
     assert_eq!(si(0, 7, 20).bounds(), (0, 7, 7));
 }
+
+/// `clip` and `widen` build some results directly instead of through `new`;
+/// rebuilding each result through `new` must give the same value.
+#[test]
+fn strided_meet_and_widen_results_are_canonical() {
+    let s = strided_samples();
+    let canon = |v: &SI8| {
+        let (st, lo, hi) = v.bounds();
+        assert_eq!(si(st, lo, hi).bounds(), v.bounds());
+    };
+    for a in &s {
+        for b in &s {
+            if let BotOr::Val(m) = a.meet(b) {
+                canon(&m);
+            }
+            canon(&a.widen(b));
+        }
+    }
+}
