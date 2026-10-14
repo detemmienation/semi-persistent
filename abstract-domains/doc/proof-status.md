@@ -82,7 +82,7 @@ L4 soundness work.
 (`interval.rs`, `interval_z.rs`). Until every domain is migrated, the crate
 has two coexisting shapes for machine-word domains: the legacy per-width macro
 stamping in `domains.rs` (`ExecTnum`, `ExecAnum`, `ExecUnum`, the old
-`Interval`, `ReducedProduct`) and the new generic-over-`W` shape. The two
+`Interval`) and the new generic-over-`W` shape. The two
 are independent; nothing here claims anything about the legacy macro
 types' status beyond what the Layer table already says.
 
