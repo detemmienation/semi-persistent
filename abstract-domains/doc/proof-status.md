@@ -26,21 +26,33 @@ The `d128` macro invocation remains disabled because its bitvector obligations
 exceed the current solver capacity. Do not describe `u128` as an enabled or
 verified executable instance.
 
-Two Rust test suites provide runtime evidence, with different philosophies.
-The mirror suite hand-reimplements each macro-stamped legacy type and fuzzes
-the reimplementation against itself; it is randomized/exhaustive evidence,
-not an independent proof that the mirror matches the verified definitions:
+Three Rust test suites provide runtime evidence.
+
+The mirror suite contains 32 tests:
 
 ```text
-cargo test -p semi-persistent-abstract-domains --test fuzz   # 32 tests
+cargo test -p semi-persistent-abstract-domains --test fuzz
 ```
 
+Those tests mirror the Verus definitions and provide randomized/exhaustive
+finite evidence. They are not an independent proof that a separate executable
+implementation corresponds to the verified definitions.
+
 The `Domain`-trait suite (`doc/domain-traits.md`'s convention) instead calls
-the real executable code directly and brute-forces small (`u8`) instances
-against it -- no hand-written reimplementation to drift out of sync:
+the real executable code directly and checks it against brute-force
+concretization on samples of `u8` values, with no hand-written
+reimplementation to drift out of sync:
 
 ```text
 cargo test -p semi-persistent-abstract-domains --test domain_traits
+```
+
+The reduced-product suite checks the reduction protocol (`src/reduce.rs`) and
+the fact records against brute-force concretization at `u8`, plus `u128`
+instances (`doc/reduced-product.md`):
+
+```text
+cargo test -p semi-persistent-abstract-domains --test reduced_product
 ```
 
 ## Layer status
