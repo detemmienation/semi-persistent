@@ -126,3 +126,21 @@ The tight join stride is `gcd(s1, s2, |lo1 - lo2|)` (Balakrishnan &
 Reps), and the exact meet for non-dividing strides needs CRT. Both come
 from the `gcd`/`crt_merge` helpers in #112, which has not landed yet.
 Arithmetic transfers and reduction into a `Product` are still open.
+
+`src/grid.rs` rounds a word onto the grid of a congruence `(r, m)`:
+`{x | x % m == r}`, or `{r}` when `m == 0`. These helpers are the
+interval/congruence grid step that `Facts::normalize` will use once the
+congruence field lands (`doc/reduced-product.md`). `round_up(x, r, m)`
+returns the smallest grid point `>= x` and `round_down(x, r, m)` the
+largest grid point `<= x`. Both contracts state optimality, not only
+membership: no grid point lies strictly between `x` and the result.
+`None` means no grid point exists on that side within `W`, so both
+functions return `None` where the arithmetic would wrap. They are generic
+over `W: Word` and compute only with `urem`, `checked_add` and
+`checked_sub`. The tests check them against brute force on every
+well-formed `(x, r, m)` at `u8`, and on hand-computed boundary cases at
+`u128`:
+
+```text
+cargo test -p semi-persistent-abstract-domains --test grid
+```
